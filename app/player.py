@@ -59,6 +59,7 @@ class Player:
         self._started_refresh: set[int] = set()
         self._resolver_lock = threading.Lock()
         self._resolvers: set[threading.Thread] = set()
+        self._stopping = False
         self._background_slots = threading.BoundedSemaphore(4)
         self._refresh_inflight: set[int] = set()
         self._last_maintenance = 0.0
@@ -92,6 +93,7 @@ class Player:
         self._rotation_skip = {
             str(item) for item in raw_skip if isinstance(item, str)
         }
+        self._rotation_exhausted = False
         self._audio_rev = self._int_setting(self.db.get_setting(K_AUDIO_REV))
 
     def _save_state(self) -> None:
@@ -137,6 +139,7 @@ class Player:
                 return track, int(queued["id"])
         playlist = self.db.list_playlist_summaries()
         if not playlist:
+            self._rotation_exhausted = True
             return None, 0
         index = self._rotation_index
         while index < len(playlist):
@@ -150,9 +153,11 @@ class Player:
             break
         if index >= len(playlist):
             self._rotation_index = index
+            self._rotation_exhausted = True
             self._trim_rotation_skip(playlist)
             return None, 0
         self._rotation_index = index + 1
+        self._rotation_exhausted = False
         self._trim_rotation_skip(playlist)
         chosen = playlist[index]
         track = self.db.get_track(str(chosen["id"]))
@@ -191,12 +196,11 @@ class Player:
 
             if queue_id:
                 self.db.set_queue_status(queue_id, "playing", started_at=now)
-                playlist_ids = {
-                    str(item["id"])
-                    for item in self.db.list_playlist_summaries()
-                }
+                playlist = self.db.list_playlist_summaries()
+                playlist_ids = {str(item["id"]) for item in playlist}
                 if str(track["id"]) in playlist_ids:
                     self._rotation_skip.add(str(track["id"]))
+                self._trim_rotation_skip(playlist)
 
             self._track_id = str(track["id"])
             self._started_at = now
@@ -261,7 +265,12 @@ class Player:
                 return ""
             track = self._current_track()
             if track is None or self._started_at <= 0:
-                if not self.db.list_playlist_summaries() and self.db.next_pending() is None:
+                if self.db.next_pending() is not None:
+                    return "start"
+                if self._rotation_exhausted:
+                    return ""
+                if not self.db.list_playlist_summaries():
+                    self._rotation_exhausted = True
                     if self._rotation_skip:
                         self._rotation_skip.clear()
                         self._save_state()
@@ -325,11 +334,15 @@ class Player:
             self._save_state()
             logger.info("player resumed")
 
+    def notify_playlist_changed(self) -> None:
+        with self._lock:
+            self._rotation_exhausted = False
+
     def skip(self, reason: str = "skip") -> dict[str, Any] | None:
         return self.advance(reason)
 
-    def skip_async(self, reason: str = "skip") -> bool:
-        return self._advance_state_async(reason)
+    def skip_async(self, reason: str = "skip", expected_seq: int | None = None) -> bool:
+        return self._advance_state_async(reason, expected_seq=expected_seq)
 
     def _peek_next(self) -> dict[str, Any] | None:
         queued = self.db.next_pending()
@@ -382,28 +395,36 @@ class Player:
 
         thread = threading.Thread(target=run, name="radio-resolve", daemon=True)
         with self._resolver_lock:
+            if self._stopping:
+                self._background_slots.release()
+                return False
             self._resolvers.add(thread)
-        try:
-            thread.start()
-        except Exception:
-            with self._resolver_lock:
+            try:
+                thread.start()
+            except Exception:
                 self._resolvers.discard(thread)
-            self._background_slots.release()
-            logger.exception("failed to start background resolver")
-            return False
+                self._background_slots.release()
+                logger.exception("failed to start background resolver")
+                return False
         return True
 
     def _spawn_resolve(self, track: dict[str, Any], seq: int) -> bool:
         return self._spawn_background(self._resolve_track_audio, track, seq)
 
-    def _advance_state_async(self, reason: str) -> bool:
+    def _advance_state_async(
+        self, reason: str, expected_seq: int | None = None
+    ) -> bool:
         if not self._advance_lock.acquire(blocking=False):
             return False
         try:
+            with self._lock:
+                if expected_seq is not None and expected_seq != self._seq:
+                    return False
+                before_seq = self._seq
             track, seq = self._advance_state(reason)
             if track is not None:
                 self._spawn_resolve(track, seq)
-            return True
+            return seq != before_seq
         finally:
             self._advance_lock.release()
 
@@ -476,7 +497,7 @@ class Player:
                 track = self._current_track() if event in {"error", "stalled"} else None
 
         if event == "ended" and should_advance:
-            self._advance_state_async("client-ended")
+            self._advance_state_async("client-ended", expected_seq=seq)
         elif event in {"error", "stalled"} and track is not None:
             with self._lock:
                 if seq in self._refresh_inflight:
@@ -643,6 +664,7 @@ class Player:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._stopping = False
         self._thread = threading.Thread(target=self._run, name="radio-player", daemon=True)
         self._thread.start()
 
@@ -652,6 +674,8 @@ class Player:
             self._thread.join(timeout=2.0)
             self._thread = None
         with self._resolver_lock:
+            self._stopping = True
             resolvers = list(self._resolvers)
         for thread in resolvers:
-            thread.join(timeout=3.0)
+            if thread.ident is not None:
+                thread.join(timeout=3.0)

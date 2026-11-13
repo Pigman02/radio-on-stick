@@ -638,7 +638,7 @@ class RadioHandler(BaseHTTPRequestHandler):
             and result["passed"]
             and self.app.votes.claim_switch(seq)
         ):
-            if self.app.player.skip_async("vote"):
+            if self.app.player.skip_async("vote", expected_seq=seq):
                 now = self.app.player.snapshot()
                 self.app.votes.reset(int(now.get("seq") or 0))
                 switched = True
@@ -744,6 +744,7 @@ class RadioHandler(BaseHTTPRequestHandler):
             was_enabled = bool(track.get("enabled"))
             self.app.db.update_track(track["id"], {"enabled": True})
             queued = None
+            self.app.player.notify_playlist_changed()
             with self.app.request_lock:
                 current = self.app.player.snapshot(ensure=False).get("track")
                 is_current = bool(current and current.get("id") == track["id"])

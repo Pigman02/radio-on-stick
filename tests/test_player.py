@@ -172,6 +172,7 @@ class PlayerTests(unittest.TestCase):
         self.assertIsNone(self.player.snapshot()["track"])
 
         seed_track(self.db, "t3", "Third", 10_000, 3)
+        self.player.notify_playlist_changed()
         restarted = self.player.snapshot()
         self.assertEqual(restarted["track"]["id"], "t3")
 
@@ -193,6 +194,25 @@ class PlayerTests(unittest.TestCase):
         snapshot = self.player.report(seq, "ended")
         self.assertEqual(snapshot["seq"], seq + 1)
         self.assertEqual(snapshot["track"]["id"], "t2")
+
+    def test_skip_async_respects_expected_sequence(self):
+        self.player.advance("test")
+        old_seq = self.player.snapshot()["seq"]
+        self.clock.advance(11)
+        self.assertEqual(self.player.snapshot()["track"]["id"], "t2")
+        self.assertFalse(
+            self.player.skip_async("stale-vote", expected_seq=old_seq)
+        )
+        self.assertEqual(self.player.snapshot()["track"]["id"], "t2")
+
+    def test_skip_async_reports_noop_as_failure(self):
+        self.player.advance("test")
+        self.player.advance("test")
+        self.player.advance("test")
+        self.assertIsNone(self.player.snapshot()["track"])
+        seq = self.player.snapshot()["seq"]
+        self.assertFalse(self.player.skip_async("test"))
+        self.assertEqual(self.player.snapshot()["seq"], seq)
 
     def test_skip_async_reports_busy_instead_of_silent_success(self):
         self.player.advance("test")
