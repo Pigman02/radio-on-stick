@@ -207,14 +207,30 @@ python -m unittest discover -s tests -t . -v
 
 目标设备实测为 Debian 12 bookworm aarch64、4 核、401MB 内存、根分区可用约 1.9GB。Nginx 只负责静态文件、反向代理和限流；Python 服务建议只监听 `127.0.0.1`。
 
-P6 部署文件（Nginx 配置、systemd、安装脚本）尚未加入。部署时应：
+部署文件已放在 `deploy/`。打包：
+
+```bash
+bash deploy/package.sh
+```
+
+生成 `dist/radio-on-stick-<版本>-<时间>.tar.gz` 和 `.sha256`。目标机解压后：
+
+```bash
+tar -xzf radio-on-stick-*.tar.gz
+cd radio-on-stick-*
+sudo bash deploy/install.sh
+```
+
+安装脚本会安装 Nginx、创建 `radio` 用户、部署到 `/opt/radio-on-stick`、数据放 `/var/lib/radio-on-stick`、生成 `/etc/radio-on-stick.env`，并启动 systemd 服务。详细说明见 `deploy/README.md`。
+
+部署要点：
 
 - 只安装 `nginx`，不装 pip 包
 - Python 只监听 `127.0.0.1`，不要暴露给局域网或公网
 - Nginx 必须覆盖 `X-Real-IP`/`X-Forwarded-For`，不要透传客户端自带值
 - Nginx 监听 80，允许 Tailscale `100.64.0.0/10` 和私网段
 - `/now.json`、`/api/report` 关闭 access log
-- systemd `MemoryMax` 限制在 150MB 左右
+- systemd `MemoryMax` 限制在 160MB 左右
 - journald 限制日志大小
 - 修改 SSH 密码并加 SSH key
 
