@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#070a12">
   <title>我的电台</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css?v=7">
+  <link rel="stylesheet" href="/style.css?v=8">
 </head>
 <body>
   <div class="bg-layer" id="bgLayerA" aria-hidden="true"></div>
@@ -126,22 +126,26 @@
         <div id="playlistList" class="playlist-list"></div>
       </section>
 
-      <section class="card messages-card">
+      <section class="card messages-card" id="messagesCard">
         <div class="card-head">
-          <div>
+          <div class="messages-head-left">
             <h3>留言</h3>
+            <span class="messages-live">实时</span>
           </div>
-          <span id="messageIdentity" class="identity-pill"></span>
+          <div class="messages-head-actions">
+            <span id="messageIdentity" class="identity-pill"></span>
+            <button id="messagesToggle" class="ghost-btn" type="button" aria-expanded="true">收起</button>
+          </div>
         </div>
-        <form id="messageForm" class="message-form" autocomplete="off">
-          <textarea id="messageInput" maxlength="200" rows="3" placeholder="写点什么"></textarea>
-          <div class="form-foot">
-            <p id="messageStatus" class="form-status" role="status"></p>
-            <button id="messageBtn" type="submit">发送留言</button>
+        <div class="messages-body" id="messagesBody">
+          <div id="messageList" class="message-list">
+            <p class="empty">还没有留言</p>
           </div>
-        </form>
-        <div id="messageList" class="message-list">
-          <p class="empty">还没有留言</p>
+          <form id="messageForm" class="message-form live" autocomplete="off">
+            <input id="messageInput" maxlength="200" placeholder="发个留言…">
+            <button id="messageBtn" class="primary-btn" type="submit">发送</button>
+          </form>
+          <p id="messageStatus" class="form-status" role="status"></p>
         </div>
       </section>
     </main>
@@ -161,6 +165,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=7"></script>
+  <script src="/app.js?v=8"></script>
 </body>
 </html>

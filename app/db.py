@@ -367,6 +367,18 @@ class Database:
         cur = self._execute("UPDATE queue SET status = 'rejected' WHERE status = 'pending'")
         return int(cur.rowcount or 0)
 
+    def cleanup_history(self) -> int:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM queue_pins WHERE queue_id IN "
+                "(SELECT id FROM queue WHERE status IN ('played', 'rejected'))"
+            )
+            cur = self._conn.execute(
+                "DELETE FROM queue WHERE status IN ('played', 'rejected')"
+            )
+            self._conn.commit()
+            return int(cur.rowcount or 0)
+
     def pin_queue(
         self, queue_id: int, voter_key: str, created_at: int | None = None
     ) -> dict[str, Any] | None:

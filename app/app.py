@@ -38,6 +38,7 @@ def build_app(
     config = config or Config.from_env()
     config.ensure_dirs()
     db = Database(config.db_path)
+    db.cleanup_history()
     http = http or HttpClient(
         timeout=config.upstream_timeout,
         retries=config.upstream_retries,

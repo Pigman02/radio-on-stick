@@ -342,22 +342,6 @@ class Player:
                     }
                 )
                 seen.add(str(track["id"]))
-
-            for track in playlist:
-                if len(items) >= limit:
-                    break
-                if str(track["id"]) in seen:
-                    continue
-                items.append(
-                    {
-                        **self._track_summary(track),
-                        "queue_id": None,
-                        "nickname": None,
-                        "priority": 0,
-                        "status": "played",
-                    }
-                )
-                seen.add(str(track["id"]))
             return items
 
     def snapshot(self, ensure: bool = True) -> dict[str, Any]:

@@ -48,6 +48,9 @@ const messageBtn = $("messageBtn");
 const messageStatus = $("messageStatus");
 const messageIdentity = $("messageIdentity");
 const messageList = $("messageList");
+const messagesCard = $("messagesCard");
+const messagesToggle = $("messagesToggle");
+const messagesBody = $("messagesBody");
 
 const nicknameModal = $("nicknameModal");
 const nicknameInput = $("nicknameInput");
@@ -94,6 +97,7 @@ const state = {
   messageBusy: false,
   messageTs: Date.now() - 5000,
   lastMessageCount: -1,
+  messagesCollapsed: false,
 };
 
 function clamp(value, min, max) {
@@ -857,6 +861,19 @@ function renderPlaylist(items) {
   }
 }
 
+function setMessagesCollapsed(collapsed, persist = true) {
+  state.messagesCollapsed = Boolean(collapsed);
+  messagesCard.classList.toggle("collapsed", state.messagesCollapsed);
+  messagesToggle.textContent = state.messagesCollapsed ? "展开" : "收起";
+  messagesToggle.setAttribute("aria-expanded", String(!state.messagesCollapsed));
+  if (persist) storageSet("radio.messagesCollapsed", state.messagesCollapsed ? "1" : "0");
+  if (!state.messagesCollapsed) {
+    requestAnimationFrame(() => {
+      messageList.scrollTop = messageList.scrollHeight;
+    });
+  }
+}
+
 function renderMessages(items) {
   const wasNearBottom =
     messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight < 48;
@@ -879,24 +896,21 @@ function renderMessages(items) {
     const row = document.createElement("div");
     row.className = "message-item";
 
-    const top = document.createElement("div");
-    top.className = "message-top";
     const name = document.createElement("span");
     name.className = "message-name";
     name.textContent = item.nickname || "匿名";
+
+    const body = document.createElement("span");
+    body.className = "message-body";
+    body.textContent = item.body || "";
+
     const time = document.createElement("span");
     time.className = "message-time";
     time.textContent = fmtRelative(item.created_at);
-    top.appendChild(name);
-    top.appendChild(time);
-    row.appendChild(top);
 
-    if (item.body) {
-      const body = document.createElement("p");
-      body.className = "message-body";
-      body.textContent = item.body;
-      row.appendChild(body);
-    }
+    row.appendChild(name);
+    row.appendChild(body);
+    row.appendChild(time);
     messageList.appendChild(row);
   }
 
@@ -1217,6 +1231,10 @@ translationToggle.addEventListener("click", () => {
   lyricsEl.classList.toggle("hide-translation", !state.showTranslation);
 });
 
+messagesToggle.addEventListener("click", () =>
+  setMessagesCollapsed(!state.messagesCollapsed)
+);
+
 nicknameBtn.addEventListener("click", openNicknameModal);
 nicknameSave.addEventListener("click", saveNickname);
 nicknameInput.addEventListener("keydown", (event) => {
@@ -1307,6 +1325,7 @@ document.addEventListener("visibilitychange", () => {
 /* ---------- init ---------- */
 
 loadNickname();
+setMessagesCollapsed(storageGet("radio.messagesCollapsed") === "1", false);
 
 const savedVolume = storageGet("radio.volume");
 if (savedVolume !== null) volumeEl.value = savedVolume;
