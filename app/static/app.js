@@ -185,8 +185,11 @@ function updateVoteUI(now) {
   const hasTrack = Boolean(now && now.track);
   const vote = (now && now.vote) || {};
   const votes = Number(vote.votes) || 0;
+  const listeners = Number(vote.listeners) || 0;
   const needed = Number(vote.needed) || 1;
-  voteInfo.textContent = hasTrack ? `${votes} / ${needed}` : "0 / 1";
+  const total = listeners || needed;
+  voteInfo.textContent = hasTrack ? `${votes} / ${total}` : "0 / 1";
+  voteInfo.title = `达到 ${needed} 票切换下一首`;
   voteSkipBtn.disabled = !hasTrack || Boolean(vote.voted);
   voteSkipBtn.textContent = vote.voted ? "已投票" : "投票切歌";
 }
