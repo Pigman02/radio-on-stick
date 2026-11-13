@@ -92,8 +92,12 @@ function errorText(error, fallback = "操作失败") {
 function fmtTime(ms, estimated = false) {
   if (!Number.isFinite(ms) || ms < 0) return "--:--";
   const total = Math.floor(ms / 1000);
-  const minutes = Math.floor(total / 60);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
   const seconds = total % 60;
+  if (hours > 0) {
+    return `${estimated ? "~" : ""}${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
   return `${estimated ? "~" : ""}${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 

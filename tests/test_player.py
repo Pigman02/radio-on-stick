@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -70,6 +72,25 @@ class PlayerTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.tmp.cleanup()
+
+    def test_snapshot_is_not_blocked_by_audio_refresh(self):
+        class SlowAggregator(FakeAggregator):
+            def refresh_audio(self, track, force=False):
+                time.sleep(0.6)
+                return super().refresh_audio(track, force=force)
+
+        slow = SlowAggregator(self.db)
+        player = Player(self.db, slow, self.config, clock=self.clock)
+        thread = threading.Thread(target=player.ensure_started, daemon=True)
+        thread.start()
+        time.sleep(0.1)
+
+        started = time.monotonic()
+        snapshot = player.snapshot()
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 0.2)
+        self.assertEqual(snapshot["track"]["id"], "t1")
+        thread.join(timeout=2)
 
     def test_start_and_position(self):
         self.player.ensure_started()

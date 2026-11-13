@@ -57,6 +57,9 @@ class Config:
     min_form_ms: int = 1200
     report_limit_per_min: int = 10
     search_per_min: int = 20
+    lyrics_per_min: int = 30
+    lyrics_retry_sec: int = 600
+    pin_per_min: int = 10
     search_limit: int = 5
     search_results_limit: int = 12
     search_cache_ttl_sec: int = 900
@@ -72,8 +75,8 @@ class Config:
         "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
     )
-    netease_search_url: str = "http://music.163.com/api/search/get/web"
-    netease_lyric_url: str = "http://music.163.com/api/song/lyric"
+    netease_search_url: str = "https://music.163.com/api/search/get/web"
+    netease_lyric_url: str = "https://music.163.com/api/song/lyric"
     qq_search_url: str = "https://music.txqq.pro/"
     meting_base_url: str = "https://api.qijieya.cn/meting/"
     max_body_bytes: int = 16 * 1024
@@ -108,6 +111,9 @@ class Config:
             min_form_ms=_int(source, "RADIO_MIN_FORM_MS", 1200),
             report_limit_per_min=_int(source, "RADIO_REPORT_PER_MIN", 10),
             search_per_min=_int(source, "RADIO_SEARCH_PER_MIN", 20),
+            lyrics_per_min=_int(source, "RADIO_LYRICS_PER_MIN", 30),
+            lyrics_retry_sec=_int(source, "RADIO_LYRICS_RETRY", 600),
+            pin_per_min=_int(source, "RADIO_PIN_PER_MIN", 10),
             banned_words=_csv(source, "RADIO_BANNED_WORDS", ()),
             default_duration_ms=_int(source, "RADIO_DEFAULT_DURATION_MS", 240_000),
             poll_interval_sec=_float(source, "RADIO_POLL_INTERVAL", 0.5),
@@ -123,10 +129,10 @@ class Config:
             upstream_retries=_int(source, "RADIO_UPSTREAM_RETRIES", 2),
             user_agent=_text(source, "RADIO_USER_AGENT", cls.user_agent),
             netease_search_url=_text(
-                source, "RADIO_NETEASE_SEARCH_URL", "http://music.163.com/api/search/get/web"
+                source, "RADIO_NETEASE_SEARCH_URL", "https://music.163.com/api/search/get/web"
             ),
             netease_lyric_url=_text(
-                source, "RADIO_NETEASE_LYRIC_URL", "http://music.163.com/api/song/lyric"
+                source, "RADIO_NETEASE_LYRIC_URL", "https://music.163.com/api/song/lyric"
             ),
             qq_search_url=_text(source, "RADIO_QQ_SEARCH_URL", "https://music.txqq.pro/"),
             meting_base_url=_text(

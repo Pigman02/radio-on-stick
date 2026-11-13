@@ -47,11 +47,13 @@ class VoteTracker:
         self._lock = threading.Lock()
         self._seq = -1
         self._votes: set[str] = set()
+        self._switched_seq = -1
 
     def _ensure(self, seq: int) -> None:
         if seq != self._seq:
             self._seq = seq
             self._votes.clear()
+            self._switched_seq = -1
 
     @staticmethod
     def needed(listeners: int) -> int:
@@ -90,7 +92,16 @@ class VoteTracker:
                 "passed": votes >= needed,
             }
 
+    def claim_switch(self, seq: int) -> bool:
+        with self._lock:
+            self._ensure(seq)
+            if self._switched_seq == seq:
+                return False
+            self._switched_seq = seq
+            return True
+
     def reset(self, seq: int) -> None:
         with self._lock:
             self._seq = seq
             self._votes.clear()
+            self._switched_seq = -1

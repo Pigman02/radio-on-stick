@@ -59,7 +59,7 @@ python tools/radioctl.py now
 |---|---|---|
 | `RADIO_HOST` | `127.0.0.1` | Python 监听地址，生产环境应只给 Nginx 访问 |
 | `RADIO_PORT` | `8080` | Python 监听端口 |
-| `RADIO_DATA_DIR` | `./data` | 数据目录，背景图在 `data/backgrounds` |
+| `RADIO_DATA_DIR` | `项目目录/data` | 数据目录，背景图在 `data/backgrounds` |
 | `RADIO_DB_PATH` | `./data/radio.db` | SQLite 路径 |
 | `RADIO_STATION_NAME` | `我的电台` | 默认电台名称 |
 | `RADIO_STATION_SUBTITLE` | `分享一首歌，留一句话` | 默认副标题 |
@@ -75,10 +75,23 @@ python tools/radioctl.py now
 | `RADIO_NICK_MAX` | `16` | 昵称最大长度 |
 | `RADIO_MIN_FORM_MS` | `1200` | 表单最短填写时间，挡简单脚本 |
 | `RADIO_REPORT_PER_MIN` | `10` | 播放失败上报频率 |
-| `RADIO_SEARCH_PER_MIN` | `20` | 同一 IP 每分钟搜索次数 |
+| `RADIO_SEARCH_PER_MIN` | `20` | 同一 IP 每分钟搜索/解析次数 |
 | `RADIO_SEARCH_LIMIT` | `5` | 每个音源每次取的条数 |
 | `RADIO_SEARCH_RESULTS` | `12` | 合并后的搜索结果上限 |
 | `RADIO_SEARCH_CACHE_TTL` | `900` | 搜索候选缓存秒数 |
+| `RADIO_LYRICS_PER_MIN` | `30` | 同一 IP 每分钟歌词请求 |
+| `RADIO_LYRICS_RETRY` | `600` | 无歌词负缓存秒数 |
+| `RADIO_PIN_PER_MIN` | `10` | 同一 IP 每分钟置顶操作 |
+| `RADIO_UPSTREAM_TIMEOUT` | `8` | 上游 HTTP 超时秒数 |
+| `RADIO_UPSTREAM_RETRIES` | `2` | 上游 HTTP 重试次数 |
+| `RADIO_POLL_INTERVAL` | `0.5` | 播放调度轮询间隔秒数 |
+| `RADIO_STATIC_DIR` | `app/static` | 静态文件目录 |
+| `RADIO_STATIC_CACHE` | `3600` | 静态资源缓存秒数 |
+| `RADIO_MAX_BODY_BYTES` | `16384` | JSON 请求体上限 |
+| `RADIO_NETEASE_SEARCH_URL` | `https://music.163.com/api/search/get/web` | 网易搜索接口 |
+| `RADIO_NETEASE_LYRIC_URL` | `https://music.163.com/api/song/lyric` | 网易歌词接口 |
+| `RADIO_QQ_SEARCH_URL` | `https://music.txqq.pro/` | TXQQ 搜索接口 |
+| `RADIO_METING_BASE_URL` | `https://api.qijieya.cn/meting/` | meting 接口 |
 | `RADIO_BG_INTERVAL` | `300` | 背景随机轮换间隔秒数 |
 | `RADIO_BG_MAX_BYTES` | `8388608` | 背景图片大小上限 |
 | `RADIO_LISTENER_TTL` | `30` | 听众在线判定窗口秒数 |
@@ -195,6 +208,8 @@ python -m unittest discover -s tests -t . -v
 P6 部署文件（Nginx 配置、systemd、安装脚本）尚未加入。部署时应：
 
 - 只安装 `nginx`，不装 pip 包
+- Python 只监听 `127.0.0.1`，不要暴露给局域网或公网
+- Nginx 必须覆盖 `X-Real-IP`/`X-Forwarded-For`，不要透传客户端自带值
 - Nginx 监听 80，允许 Tailscale `100.64.0.0/10` 和私网段
 - `/now.json`、`/api/report` 关闭 access log
 - systemd `MemoryMax` 限制在 150MB 左右
