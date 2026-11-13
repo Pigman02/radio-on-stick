@@ -55,6 +55,7 @@ def main() -> int:
         server.shutdown()
         server_thread.join(timeout=2.0)
         server.server_close()
+        app.aggregator.shutdown()
         app.db.close()
     return 0
 

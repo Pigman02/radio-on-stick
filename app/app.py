@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 from .community import ListenerTracker, VoteTracker
@@ -27,6 +28,7 @@ class RadioApp:
     player: Player
     listeners: ListenerTracker
     votes: VoteTracker
+    request_lock: threading.Lock
 
 
 def build_app(
@@ -63,4 +65,5 @@ def build_app(
         player=player,
         listeners=ListenerTracker(config.listener_ttl_sec),
         votes=VoteTracker(),
+        request_lock=threading.Lock(),
     )

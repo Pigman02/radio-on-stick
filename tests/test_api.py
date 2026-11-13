@@ -481,6 +481,35 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(state["queue"][0]["priority"], 2)
         self.assertIn(q1, [item["id"] for item in state["queue"]])
 
+    def test_admin_add_existing_queues_once(self):
+        status, first = self.request(
+            "POST",
+            "/api/admin/track",
+            {"query": "First Song"},
+            token="secret",
+        )
+        self.assertEqual(status, 201, first)
+        self.assertIsNotNone(first["queued"])
+
+        status, second = self.request(
+            "POST",
+            "/api/admin/track",
+            {"query": "First Song"},
+            token="secret",
+        )
+        self.assertEqual(status, 201, second)
+        self.assertIsNone(second["queued"])
+
+    def test_admin_add_new_track_does_not_queue(self):
+        status, data = self.request(
+            "POST",
+            "/api/admin/track",
+            {"query": "Brand New Song"},
+            token="secret",
+        )
+        self.assertEqual(status, 201, data)
+        self.assertIsNone(data["queued"])
+
     def test_admin_page(self):
         with urllib.request.urlopen(f"{self.base}/admin", timeout=10) as response:
             body = response.read().decode("utf-8")

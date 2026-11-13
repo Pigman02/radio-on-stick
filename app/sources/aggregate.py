@@ -36,7 +36,10 @@ def _ratio(a: str, b: str) -> float:
 
 
 def _url_key(url: str) -> str:
-    parts = urllib.parse.urlsplit(url)
+    try:
+        parts = urllib.parse.urlsplit(str(url or "").strip())
+    except ValueError:
+        return ""
     return f"{parts.netloc}{parts.path}"
 
 
@@ -44,7 +47,10 @@ def _safe_url(url: Any) -> str:
     value = str(url or "").strip()
     if not value:
         return ""
-    parts = urllib.parse.urlsplit(value)
+    try:
+        parts = urllib.parse.urlsplit(value)
+    except ValueError:
+        return ""
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         return ""
     return value
@@ -75,6 +81,9 @@ class TrackAggregator:
     def register_source(self, source: Any) -> None:
         if source not in self.search_sources:
             self.search_sources.append(source)
+
+    def shutdown(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _source_name(self, source: Any) -> str:
         return str(getattr(source, "name", source.__class__.__name__))
@@ -223,7 +232,7 @@ class TrackAggregator:
                         "album": item.get("album") or "",
                         "duration_ms": int(duration_ms) if duration_ms else None,
                         "duration_estimated": not bool(duration_ms),
-                        "cover_url": item.get("cover_url") or "",
+                        "cover_url": _safe_url(item.get("cover_url")),
                     }
                 )
         return results
@@ -374,11 +383,12 @@ class TrackAggregator:
 
         alternates: list[str] = []
         seen_urls: set[str] = set()
-        for candidate in (qq_url, fallback_audio, meting_url):
+        for candidate in (qq_url, meting_url):
+            candidate = _safe_url(candidate)
             if not candidate or candidate == primary:
                 continue
             key = _url_key(candidate)
-            if key in seen_urls:
+            if not key or key in seen_urls:
                 continue
             seen_urls.add(key)
             alternates.append(candidate)
@@ -529,10 +539,11 @@ class TrackAggregator:
         alternates: list[str] = []
         seen_urls: set[str] = set()
         for candidate in (qq_url, meting_url, *(track.get("audio_alternates") or [])):
+            candidate = _safe_url(candidate)
             if not candidate or candidate == primary:
                 continue
             key = _url_key(candidate)
-            if key in seen_urls:
+            if not key or key in seen_urls:
                 continue
             seen_urls.add(key)
             alternates.append(candidate)

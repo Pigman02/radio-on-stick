@@ -70,6 +70,7 @@ class PlayerTests(unittest.TestCase):
         self.player = Player(self.db, self.aggregator, self.config, clock=self.clock)
 
     def tearDown(self):
+        self.player.stop()
         self.db.close()
         self.tmp.cleanup()
 
@@ -102,6 +103,26 @@ class PlayerTests(unittest.TestCase):
         self.clock.advance(5)
         snapshot = self.player.snapshot()
         self.assertAlmostEqual(snapshot["position_ms"], 5000, delta=20)
+
+    def test_initial_refresh_bumps_audio_rev(self):
+        self.player.ensure_started()
+        snapshot = self.player.snapshot(ensure=False)
+        self.assertEqual(snapshot["audio"]["direct"], "http://audio/t1")
+        self.assertEqual(snapshot["audio_rev"], 1)
+
+    def test_queued_playlist_track_is_not_repeated(self):
+        seed_track(self.db, "t3", "Third", 10_000, 3)
+        self.player.ensure_started()
+        self.assertEqual(self.player.snapshot()["track"]["id"], "t1")
+
+        self.db.enqueue("t3", "key", "nick", None)
+        self.player.skip("queue")
+        self.assertEqual(self.player.snapshot()["track"]["id"], "t3")
+
+        self.clock.advance(11)
+        self.assertEqual(self.player.snapshot()["track"]["id"], "t2")
+        self.clock.advance(21)
+        self.assertIsNone(self.player.snapshot()["track"])
 
     def test_advance_at_end(self):
         self.player.ensure_started()

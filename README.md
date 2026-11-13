@@ -60,7 +60,7 @@ python tools/radioctl.py now
 | `RADIO_HOST` | `127.0.0.1` | Python 监听地址，生产环境应只给 Nginx 访问 |
 | `RADIO_PORT` | `8080` | Python 监听端口 |
 | `RADIO_DATA_DIR` | `项目目录/data` | 数据目录，背景图在 `data/backgrounds` |
-| `RADIO_DB_PATH` | `./data/radio.db` | SQLite 路径 |
+| `RADIO_DB_PATH` | `项目目录/data/radio.db` | SQLite 路径 |
 | `RADIO_STATION_NAME` | `我的电台` | 默认电台名称 |
 | `RADIO_STATION_SUBTITLE` | `分享一首歌，留一句话` | 默认副标题 |
 | `RADIO_PAGE_TITLE` | 空 | 默认页面标题，空则使用电台名称 |
@@ -141,7 +141,7 @@ aggregator.register_source(MySource(...))
 - `/now.json` 会记录在线听众；人数按唯一 IP 计算，同一设备的多个标签页只算一个人。
 - 切歌投票按当前在线人数计算，达到 50% 立即切到下一首。
 - 队列项支持听众置顶，每个听众对同一项只能顶一次，按顶数降序播放。
-- 启动时会清理已播放/已拒绝的队列历史，避免无效缓存累积。
+- 启动时以及运行中每小时清理已播放/已拒绝的队列历史，避免无效缓存累积。
 
 ## API
 
@@ -160,6 +160,7 @@ aggregator.register_source(MySource(...))
 | POST | `/api/report` | `ended` / `error` / `stalled` 上报 |
 | GET | `/healthz` | 健康检查 |
 | GET | `/api/admin/state` | 管理面板状态 |
+| GET | `/api/admin/queue` | 队列列表（管理端） |
 | POST | `/api/admin/skip` | 切歌 |
 | POST | `/api/admin/pause` | 暂停电台 |
 | POST | `/api/admin/resume` | 恢复电台 |

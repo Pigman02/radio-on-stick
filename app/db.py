@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS plays (
     started_at INTEGER NOT NULL,
     ended_at INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_plays_started ON plays(started_at);
 
 CREATE TABLE IF NOT EXISTS rate_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -382,16 +383,20 @@ class Database:
 
     def clear_pending(self) -> int:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT id FROM queue WHERE status = 'pending'"
-            ).fetchall()
-            for row in rows:
-                self._conn.execute(
-                    "DELETE FROM queue_pins WHERE queue_id = ?", (int(row["id"]),)
-                )
-            cur = self._conn.execute("DELETE FROM queue WHERE status = 'pending'")
-            self._conn.commit()
-            return int(cur.rowcount or 0)
+            try:
+                rows = self._conn.execute(
+                    "SELECT id FROM queue WHERE status = 'pending'"
+                ).fetchall()
+                for row in rows:
+                    self._conn.execute(
+                        "DELETE FROM queue_pins WHERE queue_id = ?", (int(row["id"]),)
+                    )
+                cur = self._conn.execute("DELETE FROM queue WHERE status = 'pending'")
+                self._conn.commit()
+                return int(cur.rowcount or 0)
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def cleanup_old_data(self, retention_days: int = 90, now: int | None = None) -> None:
         cutoff = int(now if now is not None else now_ms()) - retention_days * 86_400_000
@@ -410,11 +415,17 @@ class Database:
 
     def delete_queue_item(self, queue_id: int) -> None:
         with self._lock:
-            self._conn.execute(
-                "DELETE FROM queue_pins WHERE queue_id = ?", (int(queue_id),)
-            )
-            self._conn.execute("DELETE FROM queue WHERE id = ?", (int(queue_id),))
-            self._conn.commit()
+            try:
+                self._conn.execute(
+                    "DELETE FROM queue_pins WHERE queue_id = ?", (int(queue_id),)
+                )
+                self._conn.execute(
+                    "DELETE FROM queue WHERE id = ?", (int(queue_id),)
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def cleanup_history(self) -> int:
         with self._lock:

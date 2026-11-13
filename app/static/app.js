@@ -819,8 +819,7 @@ function renderPlaylist(items) {
     image.src = item.cover_url || "/placeholder.svg";
     image.alt = "";
     image.onerror = () => {
-      image.onerror = null;
-      image.src = "/placeholder.svg";
+      if (!image.src.endsWith("/placeholder.svg")) image.src = "/placeholder.svg";
     };
     row.appendChild(image);
 
@@ -1030,8 +1029,7 @@ function renderPublicSearchResults(results) {
     image.src = item.cover_url || "/placeholder.svg";
     image.alt = "";
     image.onerror = () => {
-      image.onerror = null;
-      image.src = "/placeholder.svg";
+      if (!image.src.endsWith("/placeholder.svg")) image.src = "/placeholder.svg";
     };
     row.appendChild(image);
 
@@ -1334,8 +1332,7 @@ audio.addEventListener("ended", () => {
 });
 
 cover.addEventListener("error", () => {
-  cover.onerror = null;
-  cover.src = "/placeholder.svg";
+  if (!cover.src.endsWith("/placeholder.svg")) cover.src = "/placeholder.svg";
 });
 
 window.addEventListener("online", () => {
@@ -1364,7 +1361,8 @@ setMessagesCollapsed(storageGet("radio.messagesCollapsed") === "1", false);
 
 const savedVolume = storageGet("radio.volume");
 if (savedVolume !== null) volumeEl.value = savedVolume;
-audio.volume = clamp(Number(volumeEl.value) || 0.8, 0, 1);
+const initialVolume = Number(volumeEl.value);
+audio.volume = clamp(Number.isFinite(initialVolume) ? initialVolume : 0.8, 0, 1);
 
 updatePlayButton();
 refreshStatus();

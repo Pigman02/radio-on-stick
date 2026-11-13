@@ -49,11 +49,12 @@ class VoteTracker:
         self._votes: set[str] = set()
         self._switched_seq = -1
 
-    def _ensure(self, seq: int) -> None:
-        if seq != self._seq:
+    def _ensure(self, seq: int) -> bool:
+        if seq > self._seq:
             self._seq = seq
             self._votes.clear()
             self._switched_seq = -1
+        return seq == self._seq
 
     @staticmethod
     def needed(listeners: int) -> int:
@@ -63,7 +64,13 @@ class VoteTracker:
         self, seq: int, listeners: int, voter: str | None = None
     ) -> dict[str, object]:
         with self._lock:
-            self._ensure(seq)
+            if not self._ensure(seq):
+                return {
+                    "votes": 0,
+                    "needed": self.needed(listeners),
+                    "listeners": listeners,
+                    "voted": False,
+                }
             votes = len(self._votes)
             needed = self.needed(listeners)
             return {
@@ -77,7 +84,15 @@ class VoteTracker:
         self, seq: int, voter: str, listeners: int
     ) -> dict[str, object]:
         with self._lock:
-            self._ensure(seq)
+            if not self._ensure(seq):
+                return {
+                    "votes": len(self._votes),
+                    "needed": self.needed(listeners),
+                    "listeners": listeners,
+                    "voted": False,
+                    "added": False,
+                    "passed": False,
+                }
             added = voter not in self._votes
             if voter:
                 self._votes.add(voter)
@@ -94,7 +109,8 @@ class VoteTracker:
 
     def claim_switch(self, seq: int) -> bool:
         with self._lock:
-            self._ensure(seq)
+            if seq != self._seq:
+                return False
             if self._switched_seq == seq:
                 return False
             self._switched_seq = seq
