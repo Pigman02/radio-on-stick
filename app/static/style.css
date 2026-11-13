@@ -1350,15 +1350,6 @@ input[type="range"]::-moz-range-thumb {
   gap: 8px;
 }
 
-.messages-live {
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid rgba(255, 125, 138, 0.3);
-  color: #ff9aa5;
-  font-size: 9px;
-  letter-spacing: 0.08em;
-}
-
 .messages-body {
   display: flex;
   flex-direction: column;
