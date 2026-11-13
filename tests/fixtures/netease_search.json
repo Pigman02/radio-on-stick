@@ -1,0 +1,30 @@
+{
+  "result": {
+    "songs": [
+      {
+        "id": 1887467088,
+        "name": "Iron Lotus",
+        "duration": 240092,
+        "artists": [{"name": "Mili", "id": 339594}],
+        "album": {
+          "name": "To Kill a Living Book -for Library Of Ruina-",
+          "id": 134869944,
+          "picId": 109951166524388678
+        }
+      },
+      {
+        "id": 1948528660,
+        "name": "Iron Lotus (Key Ingredient ver.)",
+        "duration": 234812,
+        "artists": [{"name": "Mili", "id": 339594}],
+        "album": {
+          "name": "Iron Lotus (Key Ingredient ver.)",
+          "id": 135000001,
+          "picId": 109951166524388679
+        }
+      }
+    ],
+    "songCount": 2
+  },
+  "code": 200
+}
