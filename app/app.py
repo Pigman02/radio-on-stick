@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .community import ListenerTracker, VoteTracker
 from .config import Config
 from .db import Database
 from .player import Player
@@ -24,6 +25,8 @@ class RadioApp:
     aggregator: TrackAggregator
     limiter: RateLimiter
     player: Player
+    listeners: ListenerTracker
+    votes: VoteTracker
 
 
 def build_app(
@@ -56,4 +59,6 @@ def build_app(
         aggregator=aggregator,
         limiter=limiter,
         player=player,
+        listeners=ListenerTracker(config.listener_ttl_sec),
+        votes=VoteTracker(),
     )

@@ -12,8 +12,10 @@
   - 点歌：搜索 → 结果列表 → 选择 → 确认入队
   - 留言：独立输入，不绑定歌曲
 - 昵称首次登录设置，保存在浏览器 `localStorage`
-- 管理面板：切歌、暂停/恢复、清空队列、加入播放列表、修改页面文字、上传背景、隐藏留言
-- 背景图片随机轮换，可在管理面板上传/删除
+- 一起听人数、切歌投票（达到 50% 自动切歌）
+- 点歌队列置顶：每个听众每首可顶一次，顶数越多越靠前
+- 独立管理页 `/admin`：列表式导航、切歌、暂停/恢复、进度条、清空队列、置顶、加入播放列表、修改页面文字、上传背景、隐藏留言
+- 背景图片随机轮换，可在管理页上传/删除
 - 暗色响应式 WebUI
 
 ## 快速开始
@@ -77,6 +79,7 @@ python tools/radioctl.py now
 | `RADIO_SEARCH_CACHE_TTL` | `900` | 搜索候选缓存秒数 |
 | `RADIO_BG_INTERVAL` | `300` | 背景随机轮换间隔秒数 |
 | `RADIO_BG_MAX_BYTES` | `8388608` | 背景图片大小上限 |
+| `RADIO_LISTENER_TTL` | `30` | 听众在线判定窗口秒数 |
 | `RADIO_BANNED_WORDS` | 空 | 逗号分隔的屏蔽词 |
 | `RADIO_DEFAULT_DURATION_MS` | `240000` | 无时长元数据时的默认时长 |
 | `RADIO_LOG_LEVEL` | `INFO` | 日志级别 |
@@ -120,6 +123,8 @@ aggregator.register_source(MySource(...))
 - **播放列表放完后不会回到第一首**；如果没有待播队列，电台进入待机。
 - 待机时添加新曲目，会自动从新曲目开始。
 - 音频播放失败会自动尝试备用直连；仍失败时上报 `/api/report` 触发重新解析。
+- `/now.json?lid=` 会记录在线听众；切歌投票按当前在线人数计算，达到 50% 立即切到下一首。
+- 队列项支持听众置顶，每个听众对同一项只能顶一次，按顶数降序播放。
 
 ## API
 
@@ -133,6 +138,8 @@ aggregator.register_source(MySource(...))
 | GET | `/api/messages` | 最近留言 |
 | POST | `/api/messages` | 发送留言 |
 | POST | `/api/request` | 点歌：`candidate_id` 或兼容的 `query` |
+| POST | `/api/vote-skip` | 投票切歌，达到 50% 自动切换 |
+| POST | `/api/queue/pin` | 队列项置顶，每个听众每项一次 |
 | POST | `/api/report` | `ended` / `error` / `stalled` 上报 |
 | GET | `/healthz` | 健康检查 |
 | GET | `/api/admin/state` | 管理面板状态 |

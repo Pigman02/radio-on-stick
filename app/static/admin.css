@@ -26,16 +26,88 @@
   padding: 24px;
 }
 
-.admin-tabs {
+.admin-layout {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.admin-nav {
   position: sticky;
-  top: 0;
-  z-index: 2;
-  background: linear-gradient(180deg, rgba(17, 24, 40, 0.98), rgba(17, 24, 40, 0.92));
-  backdrop-filter: blur(8px);
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.admin-nav button {
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.admin-nav button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.admin-nav button.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.admin-content {
+  min-width: 0;
 }
 
 .admin-tab {
   max-width: 760px;
+}
+
+.admin-progress-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0 4px;
+  color: var(--faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-progress-row .progress {
+  height: 5px;
+}
+
+.admin-hint {
+  margin-left: 6px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.admin-row .pin-btn {
+  color: var(--muted);
+  border-color: var(--line);
+  background: transparent;
+}
+
+.admin-row .pin-btn:hover {
+  color: var(--accent);
+  border-color: rgba(255, 184, 107, 0.3);
+  background: var(--accent-soft);
 }
 
 .admin-now {
@@ -82,6 +154,21 @@
 
   .admin-workbench {
     padding: 18px;
+  }
+
+  .admin-layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .admin-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .admin-nav button {
+    white-space: nowrap;
   }
 
   .admin-topbar .top-actions {

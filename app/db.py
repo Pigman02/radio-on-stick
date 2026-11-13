@@ -57,6 +57,15 @@ CREATE TABLE IF NOT EXISTS queue (
 CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status, priority, id);
 CREATE INDEX IF NOT EXISTS idx_queue_requester ON queue(requester_key, status);
 
+CREATE TABLE IF NOT EXISTS queue_pins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    queue_id INTEGER NOT NULL,
+    voter_key TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(queue_id, voter_key),
+    FOREIGN KEY(queue_id) REFERENCES queue(id)
+);
+
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ip_key TEXT,
@@ -357,6 +366,36 @@ class Database:
     def clear_pending(self) -> int:
         cur = self._execute("UPDATE queue SET status = 'rejected' WHERE status = 'pending'")
         return int(cur.rowcount or 0)
+
+    def pin_queue(
+        self, queue_id: int, voter_key: str, created_at: int | None = None
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, priority FROM queue WHERE id = ? AND status = 'pending'",
+                (int(queue_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO queue_pins(queue_id, voter_key, created_at) "
+                "VALUES(?, ?, ?)",
+                (int(queue_id), voter_key, int(created_at or now_ms())),
+            )
+            pinned = bool(cur.rowcount)
+            if pinned:
+                self._conn.execute(
+                    "UPDATE queue SET priority = priority + 1 WHERE id = ?",
+                    (int(queue_id),),
+                )
+            self._conn.commit()
+            priority = self._conn.execute(
+                "SELECT priority FROM queue WHERE id = ?", (int(queue_id),)
+            ).fetchone()
+            return {
+                "pins": int(priority["priority"]) if priority else 0,
+                "pinned": pinned,
+            }
 
     def insert_message(
         self,

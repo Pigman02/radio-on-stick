@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#070a12">
   <title>我的电台</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css?v=4">
+  <link rel="stylesheet" href="/style.css?v=5">
 </head>
 <body>
   <div class="bg-layer" id="bgLayerA" aria-hidden="true"></div>
@@ -29,6 +29,7 @@
         </div>
       </div>
       <div class="top-actions">
+        <span class="listener-pill" id="listenerCount">一起听 0 人</span>
         <div class="sync-pill" id="syncStatus" data-state="connecting">连接中</div>
         <button id="nicknameBtn" class="text-btn" type="button">设置昵称</button>
       </div>
@@ -76,6 +77,10 @@
               <span id="audioMode">等待音频</span>
               <a id="audioLink" href="#" target="_blank" rel="noreferrer">音频地址</a>
             </div>
+          </div>
+          <div class="vote-row">
+            <button id="voteSkipBtn" class="ghost-btn" type="button" disabled>投票切歌</button>
+            <span id="voteInfo" class="vote-info">0 / 1</span>
           </div>
         </div>
       </section>
@@ -153,7 +158,7 @@
     <div class="modal-card">
       <p class="kicker">PROFILE</p>
       <h2 id="nicknameTitle">起个昵称喵</h2>
-      <input id="nicknameInput" maxlength="16" placeholder="例如：夜航" autocomplete="nickname">
+      <input id="nicknameInput" maxlength="16" autocomplete="nickname">
       <p id="nicknameStatus" class="form-status" role="status"></p>
       <div class="modal-actions">
         <button id="nicknameSave" class="primary-btn" type="button">保存昵称</button>
@@ -161,6 +166,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=4"></script>
+  <script src="/app.js?v=5"></script>
 </body>
 </html>

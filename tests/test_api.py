@@ -150,11 +150,14 @@ class ApiTests(unittest.TestCase):
                 exc.close()
 
     def test_now_json(self):
-        status, data = self.request("GET", "/now.json")
+        status, data = self.request("GET", "/now.json?lid=listener-0001")
         self.assertEqual(status, 200)
         self.assertEqual(data["track"]["title"], "First Song")
         self.assertIn("audio", data)
         self.assertIn("server_time_ms", data)
+        self.assertEqual(data["listeners"], 1)
+        self.assertEqual(data["vote"]["votes"], 0)
+        self.assertEqual(data["vote"]["needed"], 1)
 
     def test_lyrics_endpoint(self):
         _, now = self.request("GET", "/now.json")
@@ -340,6 +343,88 @@ class ApiTests(unittest.TestCase):
             self.assertIn("nicknameModal", body)
             self.assertNotIn("ON AIR", body)
             self.assertNotIn("adminBtn", body)
+
+    def test_vote_skip_needs_half_of_listeners(self):
+        self.app.db.insert_track(
+            {
+                "id": "t2",
+                "source": "netease",
+                "source_id": "t2",
+                "title": "Second Song",
+                "artist": "Second Artist",
+                "duration_ms": 10_000,
+                "audio_primary": "https://example.invalid/second.mp3",
+                "audio_alternates": [],
+                "enabled": True,
+                "created_at": 2,
+            }
+        )
+        _, first = self.request("GET", "/now.json?lid=listener-a000")
+        self.assertEqual(first["listeners"], 1)
+        _, second = self.request("GET", "/now.json?lid=listener-b000")
+        self.assertEqual(second["listeners"], 2)
+        self.assertEqual(second["vote"]["needed"], 1)
+
+        _, third = self.request("GET", "/now.json?lid=listener-c000")
+        self.assertEqual(third["listeners"], 3)
+        self.assertEqual(third["vote"]["needed"], 2)
+
+        status, vote1 = self.request(
+            "POST", "/api/vote-skip", {"lid": "listener-a000"}
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(vote1["switched"])
+        self.assertEqual(vote1["vote"]["votes"], 1)
+
+        status, vote2 = self.request(
+            "POST", "/api/vote-skip", {"lid": "listener-b000"}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(vote2["switched"])
+        self.assertEqual(vote2["now"]["track"]["id"], "t2")
+        self.assertEqual(vote2["now"]["vote"]["votes"], 0)
+
+    def test_queue_pin_is_unique_per_person(self):
+        self.app.db.insert_track(
+            {
+                "id": "t2",
+                "source": "netease",
+                "source_id": "t2",
+                "title": "Second Song",
+                "artist": "Second Artist",
+                "duration_ms": 10_000,
+                "audio_primary": "https://example.invalid/second.mp3",
+                "audio_alternates": [],
+                "enabled": True,
+                "created_at": 2,
+            }
+        )
+        q1 = self.app.db.enqueue("t1", "k", "one", None)
+        q2 = self.app.db.enqueue("t2", "k", "two", None)
+
+        status, data = self.request(
+            "POST", "/api/queue/pin", {"queue_id": q2, "lid": "pin-user-0001"}
+        )
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["pinned"])
+        self.assertEqual(data["pins"], 1)
+
+        status, data = self.request(
+            "POST", "/api/queue/pin", {"queue_id": q2, "lid": "pin-user-0001"}
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(data["pinned"])
+        self.assertEqual(data["pins"], 1)
+
+        status, data = self.request(
+            "POST", "/api/queue/pin", {"queue_id": q2, "lid": "pin-user-0002"}
+        )
+        self.assertEqual(data["pins"], 2)
+
+        _, state = self.request("GET", "/api/state")
+        self.assertEqual(state["queue"][0]["track_id"], "t2")
+        self.assertEqual(state["queue"][0]["priority"], 2)
+        self.assertIn(q1, [item["id"] for item in state["queue"]])
 
     def test_admin_page(self):
         with urllib.request.urlopen(f"{self.base}/admin", timeout=10) as response:
