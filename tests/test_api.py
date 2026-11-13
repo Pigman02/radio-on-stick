@@ -171,6 +171,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(first["listeners"], 1)
         self.assertEqual(second["listeners"], 1)
 
+    def test_upcoming_merges_current_and_playlist(self):
+        self.app.db.insert_track(
+            {
+                "id": "t2",
+                "source": "netease",
+                "source_id": "t2",
+                "title": "Second Song",
+                "artist": "Second Artist",
+                "duration_ms": 10_000,
+                "audio_primary": "https://example.invalid/second.mp3",
+                "audio_alternates": [],
+                "enabled": True,
+                "created_at": 2,
+            }
+        )
+        _, state = self.request("GET", "/api/state")
+        upcoming = state["upcoming"]
+        self.assertEqual(upcoming[0]["id"], "t1")
+        self.assertEqual(upcoming[0]["status"], "playing")
+        self.assertEqual(upcoming[1]["id"], "t2")
+        self.assertEqual(upcoming[1]["status"], "upcoming")
+
     def test_lyrics_endpoint(self):
         _, now = self.request("GET", "/now.json")
         status, data = self.request("GET", f"/api/lyrics/{now['track']['id']}")

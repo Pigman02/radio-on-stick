@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#070a12">
   <title>我的电台</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css?v=5">
+  <link rel="stylesheet" href="/style.css?v=6">
 </head>
 <body>
   <div class="bg-layer" id="bgLayerA" aria-hidden="true"></div>
@@ -37,117 +37,111 @@
 
     <div id="noticeBar" class="notice hidden"></div>
 
-    <main class="grid">
-      <section class="card player-card">
-        <div class="cover-block">
-          <img id="cover" src="/placeholder.svg" alt="当前曲目封面">
-          <span class="source-badge" id="sourceBadge">待机</span>
-        </div>
-        <div class="player-main">
-          <div class="eyebrow-row">
-            <span class="eyebrow">正在播放</span>
-            <span class="live-pill" id="livePill" data-state="idle">待机</span>
+    <main class="main-grid">
+      <div class="main-column">
+        <section class="card player-card">
+          <div class="cover-block">
+            <img id="cover" src="/placeholder.svg" alt="当前曲目封面">
+            <span class="source-badge" id="sourceBadge">待机</span>
           </div>
-          <h2 id="title">等待开播</h2>
-          <p id="artist" class="artist">--</p>
-          <p id="album" class="album">--</p>
-
-          <div class="timeline">
-            <div class="time-row">
-              <span id="position">00:00</span>
-              <span id="duration">--:--</span>
+          <div class="player-main">
+            <div class="eyebrow-row">
+              <span class="eyebrow">正在播放</span>
+              <span class="live-pill" id="livePill" data-state="idle">待机</span>
             </div>
-            <div class="progress" id="progressTrack" role="progressbar" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-              <div class="progress-fill" id="progressFill"></div>
-            </div>
-          </div>
+            <h2 id="title">等待开播</h2>
+            <p id="artist" class="artist">--</p>
+            <p id="album" class="album">--</p>
 
-          <div class="controls">
-            <button id="playBtn" class="play-btn" type="button" aria-label="播放">
-              <svg class="icon icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6c0 .8.9 1.3 1.6.9l10.2-6.8c.6-.4.6-1.4 0-1.8L9.6 4.3C8.9 3.9 8 4.4 8 5.2Z"/></svg>
-              <svg class="icon icon-pause hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h3.6v15H7zM13.4 4.5H17v15h-3.6z"/></svg>
-            </button>
-            <div class="volume">
-              <button id="muteBtn" class="icon-btn" type="button" aria-label="静音">
-                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2l4.3 3.5c.7.6 1.8.1 1.8-.8V6.8c0-.9-1.1-1.4-1.8-.8L7.2 9.5H4Zm12.1-1.9a6.2 6.2 0 0 1 0 8.8l1.4 1.4a8.2 8.2 0 0 0 0-11.6l-1.4 1.4Z"/></svg>
+            <div class="timeline">
+              <div class="time-row">
+                <span id="position">00:00</span>
+                <span id="duration">--:--</span>
+              </div>
+              <div class="progress" id="progressTrack" role="progressbar" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+            </div>
+
+            <div class="controls">
+              <button id="playBtn" class="play-btn" type="button" aria-label="播放">
+                <svg class="icon icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6c0 .8.9 1.3 1.6.9l10.2-6.8c.6-.4.6-1.4 0-1.8L9.6 4.3C8.9 3.9 8 4.4 8 5.2Z"/></svg>
+                <svg class="icon icon-pause hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h3.6v15H7zM13.4 4.5H17v15h-3.6z"/></svg>
               </button>
-              <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="音量">
+              <div class="volume">
+                <button id="muteBtn" class="icon-btn" type="button" aria-label="静音">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2l4.3 3.5c.7.6 1.8.1 1.8-.8V6.8c0-.9-1.1-1.4-1.8-.8L7.2 9.5H4Zm12.1-1.9a6.2 6.2 0 0 1 0 8.8l1.4 1.4a8.2 8.2 0 0 0 0-11.6l-1.4 1.4Z"/></svg>
+                </button>
+                <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="音量">
+              </div>
+              <div class="controls-meta">
+                <span id="audioMode">等待音频</span>
+                <a id="audioLink" href="#" target="_blank" rel="noreferrer">音频地址</a>
+              </div>
             </div>
-            <div class="controls-meta">
-              <span id="audioMode">等待音频</span>
-              <a id="audioLink" href="#" target="_blank" rel="noreferrer">音频地址</a>
+            <div class="vote-row">
+              <button id="voteSkipBtn" class="ghost-btn" type="button" disabled>投票切歌</button>
+              <span id="voteInfo" class="vote-info">0 / 1</span>
             </div>
           </div>
-          <div class="vote-row">
-            <button id="voteSkipBtn" class="ghost-btn" type="button" disabled>投票切歌</button>
-            <span id="voteInfo" class="vote-info">0 / 1</span>
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <section class="card lyrics-card">
+        <section class="card lyrics-card">
+          <div class="card-head">
+            <div>
+              <h3>歌词</h3>
+            </div>
+            <button id="translationToggle" class="ghost-btn" type="button" aria-pressed="true">双语</button>
+          </div>
+          <div class="lyrics-scroll" id="lyricsScroll">
+            <div class="lyrics" id="lyrics">
+              <p class="lyrics-empty">等待开播</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card messages-card">
+          <div class="card-head">
+            <div>
+              <h3>留言</h3>
+            </div>
+            <span id="messageIdentity" class="identity-pill"></span>
+          </div>
+          <form id="messageForm" class="message-form" autocomplete="off">
+            <textarea id="messageInput" maxlength="200" rows="3" placeholder="写点什么"></textarea>
+            <div class="form-foot">
+              <p id="messageStatus" class="form-status" role="status"></p>
+              <button id="messageBtn" type="submit">发送留言</button>
+            </div>
+          </form>
+          <div id="messageList" class="message-list">
+            <p class="empty">还没有留言</p>
+          </div>
+        </section>
+      </div>
+
+      <section class="card playlist-card">
         <div class="card-head">
           <div>
-            <h3>歌词</h3>
+            <h3>播放列表</h3>
           </div>
-          <button id="translationToggle" class="ghost-btn" type="button" aria-pressed="true">双语</button>
+          <span class="count-pill" id="playlistCount">0</span>
         </div>
-        <div class="lyrics-scroll" id="lyricsScroll">
-          <div class="lyrics" id="lyrics">
-            <p class="lyrics-empty">等待开播</p>
-          </div>
-        </div>
-      </section>
 
-      <section class="card queue-card">
-        <div class="card-head">
-          <div>
-            <h3>接下来</h3>
-          </div>
-          <span class="count-pill" id="queueCount">0</span>
+        <div class="request-top">
+          <form id="searchForm" class="search-form" autocomplete="off">
+            <input id="searchInput" maxlength="80" placeholder="搜索歌名或歌手" aria-label="搜索歌曲">
+            <button id="searchBtn" type="submit">搜索</button>
+          </form>
+          <button id="requestBtn" class="primary-btn" type="button" disabled>确认点歌</button>
         </div>
-        <div id="queueList" class="queue-list">
-          <p class="empty">队列还是空的</p>
-        </div>
-      </section>
-
-      <section class="card request-card">
-        <div class="card-head">
-          <div>
-            <h3>点歌</h3>
-          </div>
-        </div>
-        <form id="searchForm" class="search-form" autocomplete="off">
-          <input id="searchInput" maxlength="80" placeholder="搜索歌名或歌手" aria-label="搜索歌曲">
-          <button id="searchBtn" type="submit">搜索</button>
-        </form>
-        <p id="searchStatus" class="form-status" role="status"></p>
-        <div id="searchResults" class="search-results">
-          <p class="empty">输入关键词，选择一首歌加入队列</p>
-        </div>
-        <div id="selectBar" class="select-bar hidden">
+        <div id="selectedBar" class="selected-bar hidden">
           <span id="selectedTrack" class="selected-track"></span>
-          <button id="requestBtn" type="button">确认点歌</button>
+          <button id="clearSearch" class="ghost-btn" type="button">返回列表</button>
         </div>
-      </section>
-
-      <section class="card messages-card">
-        <div class="card-head">
-          <div>
-            <h3>留言</h3>
-          </div>
-          <span id="messageIdentity" class="identity-pill"></span>
-        </div>
-        <form id="messageForm" class="message-form" autocomplete="off">
-          <textarea id="messageInput" maxlength="200" rows="3" placeholder="写点什么"></textarea>
-          <div class="form-foot">
-            <p id="messageStatus" class="form-status" role="status"></p>
-            <button id="messageBtn" type="submit">发送留言</button>
-          </div>
-        </form>
-        <div id="messageList" class="message-list">
-          <p class="empty">还没有留言</p>
-        </div>
+        <p id="searchStatus" class="form-status" role="status"></p>
+        <div id="searchResults" class="search-results hidden"></div>
+        <div id="playlistList" class="playlist-list"></div>
       </section>
     </main>
   </div>
@@ -166,6 +160,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=5"></script>
+  <script src="/app.js?v=6"></script>
 </body>
 </html>
