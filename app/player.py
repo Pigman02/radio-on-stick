@@ -263,6 +263,103 @@ class Player:
                     self._save_state()
             return self.snapshot(ensure=False)
 
+    def upcoming(self, limit: int = 40) -> list[dict[str, Any]]:
+        with self._lock:
+            self.ensure_started()
+            limit = max(1, int(limit))
+            current = self._current_track()
+            current_id = str(current["id"]) if current else ""
+            queue_rows = self.db.list_queue(50)
+            items: list[dict[str, Any]] = []
+            seen: set[str] = set()
+
+            playing = next((row for row in queue_rows if row["status"] == "playing"), None)
+            if playing is not None:
+                items.append(
+                    {
+                        "id": playing["track_id"],
+                        "queue_id": playing["id"],
+                        "source": playing.get("source"),
+                        "title": playing.get("title"),
+                        "artist": playing.get("artist"),
+                        "album": playing.get("album"),
+                        "duration_ms": playing.get("duration_ms"),
+                        "cover_url": playing.get("cover_url") or "",
+                        "nickname": playing.get("nickname"),
+                        "priority": int(playing.get("priority") or 0),
+                        "status": "playing",
+                    }
+                )
+                seen.add(str(playing["track_id"]))
+            elif current is not None:
+                items.append(
+                    {
+                        **self._track_summary(current),
+                        "queue_id": None,
+                        "nickname": None,
+                        "priority": 0,
+                        "status": "playing",
+                    }
+                )
+                seen.add(current_id)
+
+            for row in queue_rows:
+                if row["status"] != "pending" or str(row["track_id"]) in seen:
+                    continue
+                items.append(
+                    {
+                        "id": row["track_id"],
+                        "queue_id": row["id"],
+                        "source": row.get("source"),
+                        "title": row.get("title"),
+                        "artist": row.get("artist"),
+                        "album": row.get("album"),
+                        "duration_ms": row.get("duration_ms"),
+                        "cover_url": row.get("cover_url") or "",
+                        "nickname": row.get("nickname"),
+                        "priority": int(row.get("priority") or 0),
+                        "status": "pending",
+                    }
+                )
+                seen.add(str(row["track_id"]))
+                if len(items) >= limit:
+                    return items
+
+            playlist = self.db.list_playlist()
+            index = self._rotation_index
+            while index < len(playlist) and len(items) < limit:
+                track = playlist[index]
+                index += 1
+                if str(track["id"]) in seen:
+                    continue
+                items.append(
+                    {
+                        **self._track_summary(track),
+                        "queue_id": None,
+                        "nickname": None,
+                        "priority": 0,
+                        "status": "upcoming",
+                    }
+                )
+                seen.add(str(track["id"]))
+
+            for track in playlist:
+                if len(items) >= limit:
+                    break
+                if str(track["id"]) in seen:
+                    continue
+                items.append(
+                    {
+                        **self._track_summary(track),
+                        "queue_id": None,
+                        "nickname": None,
+                        "priority": 0,
+                        "status": "played",
+                    }
+                )
+                seen.add(str(track["id"]))
+            return items
+
     def snapshot(self, ensure: bool = True) -> dict[str, Any]:
         with self._lock:
             if ensure:

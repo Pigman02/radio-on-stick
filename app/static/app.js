@@ -31,16 +31,17 @@ const cover = $("cover");
 const lyricsScroll = $("lyricsScroll");
 const lyricsEl = $("lyrics");
 const translationToggle = $("translationToggle");
-const queueList = $("queueList");
-const queueCount = $("queueCount");
+const playlistList = $("playlistList");
+const playlistCount = $("playlistCount");
 const searchForm = $("searchForm");
 const searchInput = $("searchInput");
 const searchBtn = $("searchBtn");
 const searchStatus = $("searchStatus");
 const searchResults = $("searchResults");
-const selectBar = $("selectBar");
+const selectedBar = $("selectedBar");
 const selectedTrack = $("selectedTrack");
 const requestBtn = $("requestBtn");
+const clearSearchBtn = $("clearSearch");
 const messageForm = $("messageForm");
 const messageInput = $("messageInput");
 const messageBtn = $("messageBtn");
@@ -756,74 +757,102 @@ function updateLyrics(positionMs) {
   }
 }
 
-/* ---------- queue / messages ---------- */
+/* ---------- playlist / messages ---------- */
 
-function renderQueue(items) {
-  queueList.textContent = "";
-  const pending = items.filter((item) => item.status === "pending");
-  queueCount.textContent = String(pending.length);
-  if (!pending.length) {
+function renderPlaylist(items) {
+  playlistList.textContent = "";
+  playlistCount.textContent = String(
+    items.filter((item) => item.status !== "playing").length
+  );
+  if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "队列还是空的";
-    queueList.appendChild(empty);
+    empty.textContent = "播放列表为空";
+    playlistList.appendChild(empty);
     return;
   }
-  for (const [index, item] of pending.slice(0, 12).entries()) {
+
+  for (const [index, item] of items.slice(0, 60).entries()) {
+    const playing = item.status === "playing";
+    const played = item.status === "played";
     const row = document.createElement("div");
-    row.className = "queue-item";
+    row.className = `playlist-item${playing ? " playing" : ""}${played ? " played" : ""}`;
 
     const idx = document.createElement("span");
-    idx.className = "queue-index";
-    idx.textContent = String(index + 1).padStart(2, "0");
+    idx.className = "playlist-index";
+    idx.textContent = playing ? "ON" : String(index + 1).padStart(2, "0");
     row.appendChild(idx);
 
+    const image = document.createElement("img");
+    image.className = "playlist-cover";
+    image.src = item.cover_url || "/placeholder.svg";
+    image.alt = "";
+    image.onerror = () => {
+      image.onerror = null;
+      image.src = "/placeholder.svg";
+    };
+    row.appendChild(image);
+
     const copy = document.createElement("div");
-    copy.className = "queue-copy";
+    copy.className = "playlist-copy";
     const name = document.createElement("span");
-    name.className = "queue-title";
+    name.className = "playlist-title";
     name.textContent = item.title || "未知曲目";
     const sub = document.createElement("span");
-    sub.className = "queue-sub";
+    sub.className = "playlist-sub";
     const parts = [item.artist || "未知歌手"];
-    if (item.nickname) parts.push(`by ${item.nickname}`);
+    if (item.nickname && item.status === "pending") parts.push(`by ${item.nickname}`);
     sub.textContent = parts.join(" · ");
     copy.appendChild(name);
     copy.appendChild(sub);
     row.appendChild(copy);
 
-    const actions = document.createElement("div");
-    actions.className = "queue-actions";
+    const side = document.createElement("div");
+    side.className = "playlist-side";
+
+    const badge = document.createElement("span");
+    badge.className = "playlist-badge";
+    badge.textContent = playing
+      ? "正在播放"
+      : item.status === "pending"
+        ? "点歌"
+        : played
+          ? "已播放"
+          : "播放列表";
+    side.appendChild(badge);
 
     const time = document.createElement("span");
-    time.className = "queue-time";
+    time.className = "playlist-duration";
     time.textContent = fmtTime(item.duration_ms);
-    actions.appendChild(time);
+    side.appendChild(time);
 
-    const pins = Number(item.priority) || 0;
-    const pinBtn = document.createElement("button");
-    pinBtn.type = "button";
-    pinBtn.className = `pin-btn${pins > 0 ? " active" : ""}`;
-    pinBtn.textContent = pins > 0 ? `顶 ${pins}` : "顶";
-    pinBtn.title = "置顶这首歌";
-    pinBtn.addEventListener("click", async () => {
-      pinBtn.disabled = true;
-      try {
-        await fetchJSON("/api/queue/pin", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ queue_id: item.id }),
-          timeout: 10_000,
-        });
-        await loadSidebar();
-        pollSoon();
-      } catch (_) {
-        pinBtn.disabled = false;
-      }
-    });
-    actions.appendChild(pinBtn);
-    row.appendChild(actions);
-    queueList.appendChild(row);
+    if (item.status === "pending" && item.queue_id) {
+      const pins = Number(item.priority) || 0;
+      const pinBtn = document.createElement("button");
+      pinBtn.type = "button";
+      pinBtn.className = `pin-btn${pins > 0 ? " active" : ""}`;
+      pinBtn.textContent = pins > 0 ? `顶 ${pins}` : "顶";
+      pinBtn.title = "置顶这首歌";
+      pinBtn.addEventListener("click", async () => {
+        pinBtn.disabled = true;
+        try {
+          await fetchJSON("/api/queue/pin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ queue_id: item.queue_id }),
+            timeout: 10_000,
+          });
+          await loadSidebar();
+          pollSoon();
+        } catch (_) {
+          pinBtn.disabled = false;
+        }
+      });
+      side.appendChild(pinBtn);
+    }
+
+    row.appendChild(side);
+    playlistList.appendChild(row);
   }
 }
 
@@ -867,11 +896,8 @@ async function loadSidebar() {
   state.sidebarLoading = true;
   try {
     const data = await fetchJSON("/api/state", { timeout: 8_000 });
-    renderQueue(data.queue || []);
+    renderPlaylist(data.upcoming || []);
     renderMessages(data.messages || []);
-    if (data.now && data.now.queue) {
-      queueCount.textContent = String(data.now.queue.pending || 0);
-    }
   } catch (_) {
     /* sidebar is best-effort */
   } finally {
@@ -893,7 +919,7 @@ function setSelectedCandidate(item) {
     row.classList.toggle("selected", row.dataset.candidateId === item.candidate_id);
   }
   selectedTrack.textContent = `${item.title} / ${item.artist || "未知歌手"}`;
-  selectBar.classList.remove("hidden");
+  selectedBar.classList.remove("hidden");
   requestBtn.disabled = false;
 }
 
@@ -902,12 +928,30 @@ function clearSelectedCandidate() {
   for (const row of searchResults.querySelectorAll(".search-result")) {
     row.classList.remove("selected");
   }
-  selectBar.classList.add("hidden");
   selectedTrack.textContent = "";
+  requestBtn.disabled = true;
+}
+
+function enterSearchMode() {
+  searchResults.classList.remove("hidden");
+  playlistList.classList.add("hidden");
+  selectedBar.classList.remove("hidden");
+  selectedTrack.textContent = "选择一首歌后点确认";
+}
+
+function exitSearchMode() {
+  searchResults.classList.add("hidden");
+  searchResults.textContent = "";
+  playlistList.classList.remove("hidden");
+  selectedBar.classList.add("hidden");
+  clearSelectedCandidate();
+  searchInput.value = "";
+  setSearchStatus("");
 }
 
 function renderPublicSearchResults(results) {
   state.searchResults = results;
+  enterSearchMode();
   searchResults.textContent = "";
   if (!results.length) {
     const empty = document.createElement("p");
@@ -973,6 +1017,7 @@ async function performSearch(event) {
   state.searchBusy = true;
   searchBtn.disabled = true;
   setSearchStatus("正在搜索…", "busy");
+  enterSearchMode();
   clearSelectedCandidate();
   try {
     const data = await fetchJSON(`/api/search?q=${encodeURIComponent(query)}`, {
@@ -1015,9 +1060,9 @@ async function requestSelected() {
       timeout: 25_000,
     });
     const trackTitle = (data.track && data.track.title) || state.selectedCandidate.title;
-    setSearchStatus(`已加入队列：${trackTitle}`, "ok");
     state.requestTs = Date.now();
-    clearSelectedCandidate();
+    exitSearchMode();
+    setSearchStatus(`已加入队列：${trackTitle}`, "ok");
     loadSidebar();
     pollSoon();
   } catch (error) {
@@ -1161,6 +1206,7 @@ nicknameInput.addEventListener("keydown", (event) => {
 
 searchForm.addEventListener("submit", performSearch);
 requestBtn.addEventListener("click", requestSelected);
+clearSearchBtn.addEventListener("click", exitSearchMode);
 messageForm.addEventListener("submit", submitMessage);
 
 document.addEventListener("keydown", (event) => {

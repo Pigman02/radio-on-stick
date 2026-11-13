@@ -349,6 +349,7 @@ class RadioHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     "now": now,
+                    "upcoming": self.app.player.upcoming(40),
                     "queue": self.app.db.list_queue(20),
                     "messages": self.app.db.list_messages(20),
                     "listeners": now["listeners"],
