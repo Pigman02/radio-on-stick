@@ -42,7 +42,6 @@ const state = {
   nowFetchedAt: 0,
   clockOffset: 0,
   pollTimer: null,
-  adminVoter: "",
 };
 
 function sessionGet(key) {
@@ -60,22 +59,6 @@ function sessionSet(key, value) {
   } catch (_) {
     /* ignore */
   }
-}
-
-function ensureAdminVoter() {
-  const existing = sessionGet("radio.adminVoter") || "";
-  if (/^[A-Za-z0-9_-]{8,64}$/.test(existing)) {
-    state.adminVoter = existing;
-    return;
-  }
-  let id = "";
-  if (window.crypto && typeof window.crypto.randomUUID === "function") {
-    id = window.crypto.randomUUID().replace(/-/g, "");
-  } else {
-    id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
-  }
-  state.adminVoter = id;
-  sessionSet("radio.adminVoter", id);
 }
 
 async function fetchJSON(url, options = {}) {
@@ -230,10 +213,7 @@ function renderQueueAdmin(queue) {
             const button = event.currentTarget;
             button.disabled = true;
             try {
-              await adminJson("/api/queue/pin", {
-                queue_id: item.id,
-                voter_id: state.adminVoter,
-              });
+              await adminJson("/api/queue/pin", { queue_id: item.id });
               await loadState();
               pollState();
             } catch (error) {
@@ -610,7 +590,6 @@ for (const button of document.querySelectorAll(".admin-nav button")) {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 }
 
-ensureAdminVoter();
 setInterval(updateAdminProgress, 500);
 
 state.token = sessionGet("radio.adminToken") || "";

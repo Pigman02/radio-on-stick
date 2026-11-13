@@ -129,16 +129,16 @@ class ApiTests(unittest.TestCase):
         self.app.db.close()
         self.tmp.cleanup()
 
-    def request(self, method, path, payload=None, token=None):
+    def request(self, method, path, payload=None, token=None, headers=None):
         data = None
-        headers = {}
+        request_headers = dict(headers or {})
         if payload is not None:
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            request_headers["Content-Type"] = "application/json"
         if token:
-            headers["Authorization"] = f"Bearer {token}"
+            request_headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(
-            f"{self.base}{path}", data=data, headers=headers, method=method
+            f"{self.base}{path}", data=data, headers=request_headers, method=method
         )
         try:
             with urllib.request.urlopen(req, timeout=15) as response:
@@ -150,7 +150,9 @@ class ApiTests(unittest.TestCase):
                 exc.close()
 
     def test_now_json(self):
-        status, data = self.request("GET", "/now.json?lid=listener-0001")
+        status, data = self.request(
+            "GET", "/now.json", headers={"X-Real-IP": "10.0.0.1"}
+        )
         self.assertEqual(status, 200)
         self.assertEqual(data["track"]["title"], "First Song")
         self.assertIn("audio", data)
@@ -158,6 +160,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(data["listeners"], 1)
         self.assertEqual(data["vote"]["votes"], 0)
         self.assertEqual(data["vote"]["needed"], 1)
+
+    def test_same_ip_counts_once_across_tabs(self):
+        _, first = self.request(
+            "GET", "/now.json", headers={"X-Real-IP": "10.0.0.9"}
+        )
+        _, second = self.request(
+            "GET", "/now.json", headers={"X-Real-IP": "10.0.0.9"}
+        )
+        self.assertEqual(first["listeners"], 1)
+        self.assertEqual(second["listeners"], 1)
 
     def test_lyrics_endpoint(self):
         _, now = self.request("GET", "/now.json")
@@ -359,25 +371,37 @@ class ApiTests(unittest.TestCase):
                 "created_at": 2,
             }
         )
-        _, first = self.request("GET", "/now.json?lid=listener-a000")
+        _, first = self.request(
+            "GET", "/now.json", headers={"X-Real-IP": "10.0.0.1"}
+        )
         self.assertEqual(first["listeners"], 1)
-        _, second = self.request("GET", "/now.json?lid=listener-b000")
+        _, second = self.request(
+            "GET", "/now.json", headers={"X-Real-IP": "10.0.0.2"}
+        )
         self.assertEqual(second["listeners"], 2)
         self.assertEqual(second["vote"]["needed"], 1)
 
-        _, third = self.request("GET", "/now.json?lid=listener-c000")
+        _, third = self.request(
+            "GET", "/now.json", headers={"X-Real-IP": "10.0.0.3"}
+        )
         self.assertEqual(third["listeners"], 3)
         self.assertEqual(third["vote"]["needed"], 2)
 
         status, vote1 = self.request(
-            "POST", "/api/vote-skip", {"lid": "listener-a000"}
+            "POST",
+            "/api/vote-skip",
+            {},
+            headers={"X-Real-IP": "10.0.0.1"},
         )
         self.assertEqual(status, 200)
         self.assertFalse(vote1["switched"])
         self.assertEqual(vote1["vote"]["votes"], 1)
 
         status, vote2 = self.request(
-            "POST", "/api/vote-skip", {"lid": "listener-b000"}
+            "POST",
+            "/api/vote-skip",
+            {},
+            headers={"X-Real-IP": "10.0.0.2"},
         )
         self.assertEqual(status, 200)
         self.assertTrue(vote2["switched"])
@@ -403,21 +427,30 @@ class ApiTests(unittest.TestCase):
         q2 = self.app.db.enqueue("t2", "k", "two", None)
 
         status, data = self.request(
-            "POST", "/api/queue/pin", {"queue_id": q2, "lid": "pin-user-0001"}
+            "POST",
+            "/api/queue/pin",
+            {"queue_id": q2},
+            headers={"X-Real-IP": "10.0.1.1"},
         )
         self.assertEqual(status, 200, data)
         self.assertTrue(data["pinned"])
         self.assertEqual(data["pins"], 1)
 
         status, data = self.request(
-            "POST", "/api/queue/pin", {"queue_id": q2, "lid": "pin-user-0001"}
+            "POST",
+            "/api/queue/pin",
+            {"queue_id": q2},
+            headers={"X-Real-IP": "10.0.1.1"},
         )
         self.assertEqual(status, 200)
         self.assertFalse(data["pinned"])
         self.assertEqual(data["pins"], 1)
 
         status, data = self.request(
-            "POST", "/api/queue/pin", {"queue_id": q2, "lid": "pin-user-0002"}
+            "POST",
+            "/api/queue/pin",
+            {"queue_id": q2},
+            headers={"X-Real-IP": "10.0.1.2"},
         )
         self.assertEqual(data["pins"], 2)
 
