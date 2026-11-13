@@ -47,7 +47,16 @@ class VoteTrackerTests(unittest.TestCase):
 
     def test_switch_can_only_be_claimed_once(self):
         votes = VoteTracker()
+        votes.vote(1, "v:a", 1)
         self.assertTrue(votes.claim_switch(1))
+        self.assertFalse(votes.claim_switch(1))
+        votes.vote(2, "v:a", 1)
+        self.assertTrue(votes.claim_switch(2))
+        self.assertFalse(votes.claim_switch(1))
+
+    def test_old_sequence_cannot_claim_switch(self):
+        votes = VoteTracker()
+        votes.vote(2, "v:a", 1)
         self.assertFalse(votes.claim_switch(1))
         self.assertTrue(votes.claim_switch(2))
 

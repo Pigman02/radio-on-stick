@@ -590,22 +590,27 @@ class RadioHandler(BaseHTTPRequestHandler):
 
         track_summary = _summary(track)
         duplicate_since = now_ms() - self.app.config.duplicate_window_sec * 1000
-        if self.app.db.recent_track_in_queue(track["id"], duplicate_since):
-            raise ApiError(409, "duplicate", "这首歌已经在队列里了")
-        current = self.app.player.snapshot(ensure=False).get("track")
-        if current and current.get("id") == track["id"]:
-            raise ApiError(409, "duplicate", "这首歌正在播放")
+        with self.app.request_lock:
+            if self.app.db.count_pending() >= self.app.config.queue_max:
+                raise ApiError(
+                    429, "queue_full", "点歌队列已满，请稍后再试", retry_after=30
+                )
+            if self.app.db.recent_track_in_queue(track["id"], duplicate_since):
+                raise ApiError(409, "duplicate", "这首歌已经在队列里了")
+            current = self.app.player.snapshot(ensure=False).get("track")
+            if current and current.get("id") == track["id"]:
+                raise ApiError(409, "duplicate", "这首歌正在播放")
 
-        decision = self.app.limiter.consume_request(ip_key)
-        if not decision.allowed:
-            raise ApiError(
-                429,
-                decision.reason,
-                f"1 分钟内最多点 {self.app.config.request_per_min} 首，请稍后再试",
-                retry_after=decision.retry_after,
-            )
+            decision = self.app.limiter.consume_request(ip_key)
+            if not decision.allowed:
+                raise ApiError(
+                    429,
+                    decision.reason,
+                    f"1 分钟内最多点 {self.app.config.request_per_min} 首，请稍后再试",
+                    retry_after=decision.retry_after,
+                )
 
-        queue_id = self.app.db.enqueue(track["id"], ip_key, nickname, None)
+            queue_id = self.app.db.enqueue(track["id"], ip_key, nickname, None)
         logger.info("queued request %s by %s: %s", queue_id, nickname, track.get("title"))
         self._send_json(
             201,
@@ -633,7 +638,7 @@ class RadioHandler(BaseHTTPRequestHandler):
             and result["passed"]
             and self.app.votes.claim_switch(seq)
         ):
-            self.app.player.skip("vote")
+            self.app.player.skip_async("vote")
             now = self.app.player.snapshot()
             self.app.votes.reset(int(now.get("seq") or 0))
             switched = True
@@ -699,7 +704,7 @@ class RadioHandler(BaseHTTPRequestHandler):
 
     def _handle_admin(self, path: str) -> None:
         if path == "/api/admin/skip":
-            self.app.player.skip("admin")
+            self.app.player.skip_async("admin")
             self._send_json(200, {"ok": True, "now": self.app.player.snapshot()})
             return
         if path == "/api/admin/pause":
@@ -722,6 +727,9 @@ class RadioHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             candidate_id = str(data.get("candidate_id") or "").strip()
             query = _clean_text(data.get("query"), 80)
+            playlist_ids = {
+                item["id"] for item in self.app.db.list_playlist_summaries()
+            }
             if candidate_id:
                 track = self.app.aggregator.resolve_candidate(candidate_id)
             elif query:
@@ -730,16 +738,19 @@ class RadioHandler(BaseHTTPRequestHandler):
                 raise ApiError(400, "missing_query", "请输入歌名或选择搜索结果")
             if track is None:
                 raise ApiError(404, "not_found", "没有找到这首歌")
-            playlist_ids = {
-                item["id"] for item in self.app.db.list_playlist_summaries()
-            }
             was_enabled = bool(track.get("enabled"))
             self.app.db.update_track(track["id"], {"enabled": True})
             queued = None
             current = self.app.player.snapshot(ensure=False).get("track")
             is_current = bool(current and current.get("id") == track["id"])
-            if not is_current and (
-                track["id"] in playlist_ids or not was_enabled
+            already_pending = self.app.db.recent_track_in_queue(
+                track["id"], now_ms() - self.app.config.duplicate_window_sec * 1000
+            )
+            if (
+                not is_current
+                and not already_pending
+                and (track["id"] in playlist_ids or not was_enabled)
+                and self.app.db.count_pending() < self.app.config.queue_max
             ):
                 queued = self.app.db.enqueue(
                     track["id"], "admin", "admin", None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -18,7 +19,10 @@ def _safe_url(url: Any) -> str:
     value = str(url or "").strip()
     if not value:
         return ""
-    parts = urllib.parse.urlsplit(value)
+    try:
+        parts = urllib.parse.urlsplit(value)
+    except ValueError:
+        return ""
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         return ""
     return value
@@ -32,6 +36,7 @@ K_PAUSED_POS = "player.paused_position_ms"
 K_QUEUE = "player.current_queue_id"
 K_PLAY = "player.current_play_id"
 K_ROTATION = "player.rotation_index"
+K_ROTATION_SKIP = "player.rotation_skip"
 K_AUDIO_REV = "player.audio_rev"
 
 
@@ -52,6 +57,9 @@ class Player:
         self._refresh_lock = threading.Lock()
         self._refresh_stats: dict[int, tuple[int, int]] = {}
         self._started_refresh: set[int] = set()
+        self._resolver_lock = threading.Lock()
+        self._resolvers: set[threading.Thread] = set()
+        self._last_maintenance = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._load_state()
@@ -75,6 +83,13 @@ class Player:
         self._queue_id = self._int_setting(self.db.get_setting(K_QUEUE))
         self._play_id = self._int_setting(self.db.get_setting(K_PLAY))
         self._rotation_index = self._int_setting(self.db.get_setting(K_ROTATION))
+        try:
+            raw_skip = json.loads(self.db.get_setting(K_ROTATION_SKIP) or "[]")
+        except (TypeError, ValueError):
+            raw_skip = []
+        self._rotation_skip = {
+            str(item) for item in raw_skip if isinstance(item, str)
+        }
         self._audio_rev = self._int_setting(self.db.get_setting(K_AUDIO_REV))
 
     def _save_state(self) -> None:
@@ -88,6 +103,9 @@ class Player:
                 K_QUEUE: self._queue_id,
                 K_PLAY: self._play_id,
                 K_ROTATION: self._rotation_index,
+                K_ROTATION_SKIP: json.dumps(
+                    sorted(self._rotation_skip), ensure_ascii=False
+                ),
                 K_AUDIO_REV: self._audio_rev,
             }
         )
@@ -119,10 +137,15 @@ class Player:
         if not playlist:
             return None, 0
         index = self._rotation_index
-        if index >= len(playlist):
-            return None, 0
-        if len(playlist) > 1 and str(playlist[index].get("id")) == self._track_id:
-            index += 1
+        while index < len(playlist):
+            candidate_id = str(playlist[index].get("id"))
+            if candidate_id in self._rotation_skip:
+                index += 1
+                continue
+            if len(playlist) > 1 and candidate_id == self._track_id:
+                index += 1
+                continue
+            break
         if index >= len(playlist):
             self._rotation_index = index
             return None, 0
@@ -144,6 +167,7 @@ class Player:
                 self._paused = False
                 self._paused_position = 0
                 self._audio_rev = 0
+                self._rotation_skip.clear()
                 self._seq += 1
                 self._save_state()
                 logger.info("player idle (%s)", reason)
@@ -151,6 +175,12 @@ class Player:
 
             if queue_id:
                 self.db.set_queue_status(queue_id, "playing", started_at=now)
+                playlist_ids = {
+                    str(item["id"])
+                    for item in self.db.list_playlist_summaries()
+                }
+                if str(track["id"]) in playlist_ids:
+                    self._rotation_skip.add(str(track["id"]))
 
             self._track_id = str(track["id"])
             self._started_at = now
@@ -175,10 +205,27 @@ class Player:
                 if seq in self._started_refresh:
                     return
                 self._started_refresh.add(seq)
+                old_primary = track.get("audio_primary") or ""
+                old_alternates = list(track.get("audio_alternates") or [])
             try:
-                self.aggregator.refresh_audio(track)
+                updated = self.aggregator.refresh_audio(track)
             except Exception as exc:
                 logger.warning("audio refresh failed for %s: %s", track.get("title"), exc)
+                return
+            changed = (
+                (updated.get("audio_primary") or "") != old_primary
+                or list(updated.get("audio_alternates") or []) != old_alternates
+            )
+            if not changed:
+                return
+            try:
+                with self._lock:
+                    if seq != self._seq:
+                        return
+                    self._audio_rev += 1
+                    self._save_state()
+            except Exception as exc:
+                logger.warning("could not persist refreshed audio: %s", exc)
 
     def advance(self, reason: str = "auto") -> dict[str, Any] | None:
         with self._advance_lock:
@@ -237,12 +284,7 @@ class Player:
                 return
             track, seq = self._advance_state(reason)
             if track is not None:
-                threading.Thread(
-                    target=self._resolve_track_audio,
-                    args=(track, seq),
-                    name="radio-resolve",
-                    daemon=True,
-                ).start()
+                self._spawn_resolve(track, seq)
         finally:
             self._advance_lock.release()
 
@@ -279,6 +321,9 @@ class Player:
     def skip(self, reason: str = "skip") -> dict[str, Any] | None:
         return self.advance(reason)
 
+    def skip_async(self, reason: str = "skip") -> None:
+        self._advance_state_async(reason)
+
     def _peek_next(self) -> dict[str, Any] | None:
         queued = self.db.next_pending()
         if queued is not None:
@@ -289,10 +334,15 @@ class Player:
         if not playlist:
             return None
         index = self._rotation_index
-        if index >= len(playlist):
-            return None
-        if len(playlist) > 1 and str(playlist[index].get("id")) == self._track_id:
-            index += 1
+        while index < len(playlist):
+            candidate_id = str(playlist[index].get("id"))
+            if candidate_id in self._rotation_skip:
+                index += 1
+                continue
+            if len(playlist) > 1 and candidate_id == self._track_id:
+                index += 1
+                continue
+            break
         if index >= len(playlist):
             return None
         return playlist[index]
@@ -310,18 +360,29 @@ class Player:
             "cover_url": _safe_url(track.get("cover_url")),
         }
 
+    def _spawn_background(self, target: Callable[..., None], *args: Any) -> None:
+        def run() -> None:
+            try:
+                target(*args)
+            finally:
+                with self._resolver_lock:
+                    self._resolvers.discard(threading.current_thread())
+
+        thread = threading.Thread(target=run, name="radio-resolve", daemon=True)
+        with self._resolver_lock:
+            self._resolvers.add(thread)
+        thread.start()
+
+    def _spawn_resolve(self, track: dict[str, Any], seq: int) -> None:
+        self._spawn_background(self._resolve_track_audio, track, seq)
+
     def _advance_state_async(self, reason: str) -> None:
         if not self._advance_lock.acquire(blocking=False):
             return
         try:
             track, seq = self._advance_state(reason)
             if track is not None:
-                threading.Thread(
-                    target=self._resolve_track_audio,
-                    args=(track, seq),
-                    name="radio-resolve",
-                    daemon=True,
-                ).start()
+                self._spawn_resolve(track, seq)
         finally:
             self._advance_lock.release()
 
@@ -350,11 +411,14 @@ class Player:
             )
             if not changed:
                 return
-            with self._lock:
-                if seq != self._seq:
-                    return
-                self._audio_rev += 1
-                self._save_state()
+            try:
+                with self._lock:
+                    if seq != self._seq:
+                        return
+                    self._audio_rev += 1
+                    self._save_state()
+            except Exception as exc:
+                logger.warning("could not persist refreshed audio: %s", exc)
 
     def report(self, seq: int, event: str) -> dict[str, Any]:
         with self._lock:
@@ -371,7 +435,14 @@ class Player:
                         else max(0, now - self._started_at)
                     )
                     duration = self._duration(track, self.config.default_duration_ms)
-                    should_advance = position >= min(30_000, int(duration * 0.5))
+                    threshold = (
+                        5_000
+                        if track.get("duration_estimated")
+                        else min(30_000, int(duration * 0.5))
+                    )
+                    should_advance = (
+                        position >= threshold or position >= duration - 1_000
+                    )
             else:
                 should_advance = False
                 track = self._current_track() if event in {"error", "stalled"} else None
@@ -379,7 +450,7 @@ class Player:
         if event == "ended" and should_advance:
             self._advance_state_async("client-ended")
         elif event in {"error", "stalled"} and track is not None:
-            self._refresh_audio(track, seq)
+            self._spawn_background(self._refresh_audio, track, seq)
         return self.snapshot(ensure=False)
 
     def upcoming(self, limit: int = 40) -> list[dict[str, Any]]:
@@ -449,7 +520,7 @@ class Player:
             while index < len(playlist) and len(items) < limit:
                 track = playlist[index]
                 index += 1
-                if str(track["id"]) in seen:
+                if str(track["id"]) in seen or str(track["id"]) in self._rotation_skip:
                     continue
                 items.append(
                     {
@@ -524,6 +595,14 @@ class Player:
     def _run(self) -> None:
         while not self._stop.is_set():
             self.tick()
+            now = time.time()
+            if now - self._last_maintenance > 3600:
+                self._last_maintenance = now
+                try:
+                    self.db.cleanup_history()
+                    self.db.cleanup_old_data()
+                except Exception:
+                    logger.exception("periodic database cleanup failed")
             self._stop.wait(self.config.poll_interval_sec)
 
     def start(self) -> None:
@@ -538,3 +617,7 @@ class Player:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+        with self._resolver_lock:
+            resolvers = list(self._resolvers)
+        for thread in resolvers:
+            thread.join(timeout=3.0)

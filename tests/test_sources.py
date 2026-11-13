@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.config import Config
 from app.db import Database
-from app.sources.aggregate import TrackAggregator
+from app.sources.aggregate import TrackAggregator, _safe_url, _url_key
 from app.sources.meting import MetingSource
 from app.sources.netease import NeteaseSource
 from app.sources.qq import QQSource
@@ -42,6 +42,14 @@ class FakeHttp:
     def get_text(self, url, headers=None, timeout=None):
         self.calls.append(("TEXT", url, None, headers))
         return self.text
+
+
+class UrlSanitizerTests(unittest.TestCase):
+    def test_malformed_urls_do_not_raise(self):
+        self.assertEqual(_safe_url("http://[::1"), "")
+        self.assertEqual(_url_key("http://[::1"), "")
+        self.assertEqual(_safe_url("javascript:alert(1)"), "")
+        self.assertEqual(_safe_url("https://example.com/a.mp3"), "https://example.com/a.mp3")
 
 
 class SourceParsingTests(unittest.TestCase):
