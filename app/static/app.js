@@ -93,6 +93,7 @@ const state = {
   requestTs: Date.now() - 5000,
   messageBusy: false,
   messageTs: Date.now() - 5000,
+  lastMessageCount: -1,
 };
 
 function clamp(value, min, max) {
@@ -857,15 +858,24 @@ function renderPlaylist(items) {
 }
 
 function renderMessages(items) {
+  const wasNearBottom =
+    messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight < 48;
+  const previousScrollTop = messageList.scrollTop;
+  const previousHeight = messageList.scrollHeight;
+  const previousCount = state.lastMessageCount;
+  const ordered = items.slice(0, 10).reverse();
+  state.lastMessageCount = ordered.length;
+
   messageList.textContent = "";
-  if (!items.length) {
+  if (!ordered.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
     empty.textContent = "还没有留言";
     messageList.appendChild(empty);
     return;
   }
-  for (const item of items.slice(0, 10)) {
+
+  for (const item of ordered) {
     const row = document.createElement("div");
     row.className = "message-item";
 
@@ -889,6 +899,15 @@ function renderMessages(items) {
     }
     messageList.appendChild(row);
   }
+
+  const shouldStickToBottom = wasNearBottom || previousCount < 0 || ordered.length !== previousCount;
+  requestAnimationFrame(() => {
+    if (shouldStickToBottom) {
+      messageList.scrollTop = messageList.scrollHeight;
+    } else {
+      messageList.scrollTop = previousScrollTop + (messageList.scrollHeight - previousHeight);
+    }
+  });
 }
 
 async function loadSidebar() {

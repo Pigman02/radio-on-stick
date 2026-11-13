@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#070a12">
   <title>我的电台</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css?v=6">
+  <link rel="stylesheet" href="/style.css?v=7">
 </head>
 <body>
   <div class="bg-layer" id="bgLayerA" aria-hidden="true"></div>
@@ -100,24 +100,6 @@
           </div>
         </section>
 
-        <section class="card messages-card">
-          <div class="card-head">
-            <div>
-              <h3>留言</h3>
-            </div>
-            <span id="messageIdentity" class="identity-pill"></span>
-          </div>
-          <form id="messageForm" class="message-form" autocomplete="off">
-            <textarea id="messageInput" maxlength="200" rows="3" placeholder="写点什么"></textarea>
-            <div class="form-foot">
-              <p id="messageStatus" class="form-status" role="status"></p>
-              <button id="messageBtn" type="submit">发送留言</button>
-            </div>
-          </form>
-          <div id="messageList" class="message-list">
-            <p class="empty">还没有留言</p>
-          </div>
-        </section>
       </div>
 
       <section class="card playlist-card">
@@ -143,6 +125,25 @@
         <div id="searchResults" class="search-results hidden"></div>
         <div id="playlistList" class="playlist-list"></div>
       </section>
+
+      <section class="card messages-card">
+        <div class="card-head">
+          <div>
+            <h3>留言</h3>
+          </div>
+          <span id="messageIdentity" class="identity-pill"></span>
+        </div>
+        <form id="messageForm" class="message-form" autocomplete="off">
+          <textarea id="messageInput" maxlength="200" rows="3" placeholder="写点什么"></textarea>
+          <div class="form-foot">
+            <p id="messageStatus" class="form-status" role="status"></p>
+            <button id="messageBtn" type="submit">发送留言</button>
+          </div>
+        </form>
+        <div id="messageList" class="message-list">
+          <p class="empty">还没有留言</p>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -160,6 +161,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=6"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>
