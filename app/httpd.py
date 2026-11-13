@@ -92,7 +92,7 @@ class RadioServer(ThreadingHTTPServer):
 
 
 class RadioHandler(BaseHTTPRequestHandler):
-    server_version = "RadioOnStick/0.2"
+    server_version = "Radio/0.2"
     protocol_version = "HTTP/1.1"
 
     @property
@@ -393,6 +393,12 @@ class RadioHandler(BaseHTTPRequestHandler):
                 raise ApiError(404, "not_found", "背景不存在")
             self._send_file(file_path, cache_sec=86_400)
             return
+        if path in {"/admin", "/admin/"}:
+            admin_page = self.app.config.static_dir / "admin.html"
+            if not admin_page.is_file():
+                raise ApiError(404, "not_found", "管理页面不存在")
+            self._send_file(admin_page, cache_sec=0)
+            return
 
         static = self._static_path(urllib.parse.unquote(path))
         if static is not None and static.is_file():
@@ -452,9 +458,7 @@ class RadioHandler(BaseHTTPRequestHandler):
         ip_key = self._ip_key()
         decision = self.app.limiter.consume_message(ip_key)
         if not decision.allowed:
-            reason = "留言太频繁，请稍后再试"
-            if decision.reason == "message_daily_limit":
-                reason = "今天的留言次数已用完"
+            reason = f"1 分钟内最多留言 {self.app.config.message_per_min} 条，请稍后再试"
             raise ApiError(429, decision.reason, reason, retry_after=decision.retry_after)
         created_at = now_ms()
         message_id = self.app.db.insert_message(ip_key, nickname, body, None, created_at)
@@ -490,7 +494,7 @@ class RadioHandler(BaseHTTPRequestHandler):
             raise ApiError(
                 429,
                 precheck.reason,
-                "操作过于频繁，请稍后再试",
+                f"1 分钟内最多点 {self.app.config.request_per_min} 首，请稍后再试",
                 retry_after=precheck.retry_after,
             )
         if self.app.db.count_pending() >= self.app.config.queue_max:
@@ -518,7 +522,7 @@ class RadioHandler(BaseHTTPRequestHandler):
             raise ApiError(
                 429,
                 decision.reason,
-                "操作过于频繁，请稍后再试",
+                f"1 分钟内最多点 {self.app.config.request_per_min} 首，请稍后再试",
                 retry_after=decision.retry_after,
             )
 

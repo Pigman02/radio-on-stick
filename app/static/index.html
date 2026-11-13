@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#070a12">
   <title>我的电台</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css?v=3">
+  <link rel="stylesheet" href="/style.css?v=4">
 </head>
 <body>
   <div class="bg-layer" id="bgLayerA" aria-hidden="true"></div>
@@ -31,9 +31,6 @@
       <div class="top-actions">
         <div class="sync-pill" id="syncStatus" data-state="connecting">连接中</div>
         <button id="nicknameBtn" class="text-btn" type="button">设置昵称</button>
-        <button id="adminBtn" class="icon-btn" type="button" aria-label="管理面板" title="管理面板">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.2A3.8 3.8 0 1 0 12 15.8 3.8 3.8 0 0 0 12 8.2Zm9 4.9v-2.2l-2.4-.6a7.4 7.4 0 0 0-.8-1.9l1.3-2.1-1.6-1.6-2.1 1.3a7.4 7.4 0 0 0-1.9-.8L12.9 3h-1.8l-.6 2.4a7.4 7.4 0 0 0-1.9.8L6.5 4.9 4.9 6.5l1.3 2.1a7.4 7.4 0 0 0-.8 1.9L3 11.1v2.2l2.4.6c.2.7.5 1.3.8 1.9l-1.3 2.1 1.6 1.6 2.1-1.3c.6.4 1.2.6 1.9.8l.6 2.4h1.8l.6-2.4c.7-.2 1.3-.5 1.9-.8l2.1 1.3 1.6-1.6-1.3-2.1c.4-.6.6-1.2.8-1.9l2.4-.6Z"/></svg>
-        </button>
       </div>
     </header>
 
@@ -165,81 +162,6 @@
     </div>
   </div>
 
-  <div id="adminModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
-    <div class="modal-card admin-card">
-      <div class="modal-head">
-        <h2 id="adminTitle">管理面板</h2>
-        <button id="adminClose" class="icon-btn" type="button" aria-label="关闭">×</button>
-      </div>
-
-      <div id="adminLogin">
-        <p class="modal-copy">输入管理 token 后可以控制播放、修改页面文字和上传背景。</p>
-        <input id="adminToken" type="password" placeholder="管理 token" autocomplete="current-password">
-        <div class="modal-actions">
-          <button id="adminLoginBtn" class="primary-btn" type="button">登录</button>
-        </div>
-        <p id="adminLoginStatus" class="form-status" role="status"></p>
-      </div>
-
-      <div id="adminPanel" class="hidden">
-        <div class="admin-tabs" role="tablist">
-          <button type="button" data-tab="control" class="active">播放</button>
-          <button type="button" data-tab="text">页面文字</button>
-          <button type="button" data-tab="background">背景</button>
-          <button type="button" data-tab="messages">留言</button>
-        </div>
-
-        <section id="tab-control" class="admin-tab">
-          <div id="adminNow" class="admin-now"></div>
-          <div class="admin-actions">
-            <button id="adminSkip" class="primary-btn" type="button">切歌</button>
-            <button id="adminPause" type="button">暂停</button>
-            <button id="adminResume" type="button">恢复</button>
-            <button id="adminClearQueue" type="button">清空队列</button>
-          </div>
-          <h3>队列</h3>
-          <div id="adminQueue" class="admin-list"></div>
-          <h3>加入播放列表</h3>
-          <form id="adminSearchForm" class="search-form" autocomplete="off">
-            <input id="adminSearchInput" maxlength="80" placeholder="搜索歌名或歌手">
-            <button type="submit">搜索</button>
-          </form>
-          <p id="adminSearchStatus" class="form-status" role="status"></p>
-          <div id="adminSearchResults" class="search-results compact"></div>
-        </section>
-
-        <section id="tab-text" class="admin-tab hidden">
-          <label>电台名称<input id="setStationName" maxlength="40"></label>
-          <label>副标题<input id="setSubtitle" maxlength="80"></label>
-          <label>页面标题<input id="setPageTitle" maxlength="60"></label>
-          <label>公告<textarea id="setNotice" maxlength="300" rows="3"></textarea></label>
-          <label>背景轮换间隔（秒）<input id="setBgInterval" type="number" min="30" max="86400"></label>
-          <div class="modal-actions">
-            <button id="saveSettings" class="primary-btn" type="button">保存页面设置</button>
-          </div>
-          <p id="settingsStatus" class="form-status" role="status"></p>
-        </section>
-
-        <section id="tab-background" class="admin-tab hidden">
-          <label>上传背景图片（JPG / PNG / WEBP）<input id="bgFile" type="file" accept="image/jpeg,image/png,image/webp"></label>
-          <div class="modal-actions">
-            <button id="bgUpload" class="primary-btn" type="button">上传背景</button>
-          </div>
-          <p id="bgStatus" class="form-status" role="status"></p>
-          <div id="bgGallery" class="bg-gallery"></div>
-        </section>
-
-        <section id="tab-messages" class="admin-tab hidden">
-          <div id="adminMessages" class="admin-list"></div>
-        </section>
-
-        <div class="admin-footer">
-          <button id="adminLogout" class="ghost-btn" type="button">退出管理</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script src="/app.js?v=3"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>

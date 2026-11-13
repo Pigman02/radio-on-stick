@@ -38,7 +38,7 @@ RADIO_ADMIN_TOKEN=dev-token RADIO_IP_SALT=dev-salt python3 -m app
 
 打开 <http://127.0.0.1:8080>。
 
-首次进入会要求设置昵称。点歌时先搜索，选中结果后确认；留言在独立输入框发送。右上角齿轮进入管理面板，输入 `RADIO_ADMIN_TOKEN`。
+首次进入会要求设置昵称。点歌时先搜索，选中结果后确认；留言在独立输入框发送。管理页是独立页面，访问 <http://127.0.0.1:8080/admin>，输入 `RADIO_ADMIN_TOKEN`。主页面不再显示管理入口。
 
 添加第一首歌也可以直接用 CLI：
 
@@ -49,7 +49,7 @@ python tools/radioctl.py now
 
 ## 配置
 
-所有配置都来自环境变量；页面文字和背景轮换间隔可以在管理面板里覆盖。
+所有配置都来自环境变量；页面文字和背景轮换间隔可以在 `/admin` 管理页里覆盖。
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
@@ -63,14 +63,11 @@ python tools/radioctl.py now
 | `RADIO_NOTICE` | 空 | 默认公告 |
 | `RADIO_ADMIN_TOKEN` | 空 | 管理 API token；为空时管理接口禁用 |
 | `RADIO_IP_SALT` | 开发默认值 | IP 哈希盐，生产环境务必修改 |
-| `RADIO_REQUEST_COOLDOWN` | `60` | 同一 IP 点歌冷却秒数 |
-| `RADIO_REQUEST_DAILY` | `10` | 同一 IP 每日点歌上限 |
-| `RADIO_REQUEST_PENDING` | `2` | 同一 IP 同时待播上限 |
+| `RADIO_REQUEST_PER_MIN` | `5` | 同一 IP 每分钟最多点歌数，超过才限制 |
 | `RADIO_QUEUE_MAX` | `20` | 全局待播队列上限 |
 | `RADIO_DUPLICATE_WINDOW` | `1800` | 同曲去重窗口秒数 |
 | `RADIO_MESSAGE_MAX` | `200` | 留言最大长度 |
-| `RADIO_MESSAGE_COOLDOWN` | `30` | 同一 IP 留言冷却秒数 |
-| `RADIO_MESSAGE_DAILY` | `30` | 同一 IP 每日留言上限 |
+| `RADIO_MESSAGE_PER_MIN` | `10` | 同一 IP 每分钟最多留言数，超过才限制 |
 | `RADIO_NICK_MAX` | `16` | 昵称最大长度 |
 | `RADIO_MIN_FORM_MS` | `1200` | 表单最短填写时间，挡简单脚本 |
 | `RADIO_REPORT_PER_MIN` | `10` | 播放失败上报频率 |
@@ -83,6 +80,8 @@ python tools/radioctl.py now
 | `RADIO_BANNED_WORDS` | 空 | 逗号分隔的屏蔽词 |
 | `RADIO_DEFAULT_DURATION_MS` | `240000` | 无时长元数据时的默认时长 |
 | `RADIO_LOG_LEVEL` | `INFO` | 日志级别 |
+
+点歌和留言使用 60 秒滑动窗口：同一 IP 每分钟最多点 5 首、留言 10 条，第 6 首/第 11 条才会被限制，不会第一次操作就锁死。
 
 ## 数据聚合与搜索
 
@@ -164,7 +163,7 @@ radio-on-stick/
 │  ├─ settings.py        # 页面文字设置
 │  ├─ upstream.py        # urllib 客户端
 │  ├─ sources/           # 网易 / QQ / meting / 聚合
-│  └─ static/            # WebUI
+│  └─ static/            # 主页面 + /admin 独立管理页
 ├─ tests/                # unittest + 真实响应夹具
 ├─ tools/radioctl.py     # 管理 CLI
 └─ data/                 # SQLite、背景图（gitignore）

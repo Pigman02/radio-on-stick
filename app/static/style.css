@@ -70,7 +70,7 @@ a:hover {
   background-position: center;
   background-size: cover;
   opacity: 0;
-  filter: brightness(0.42) saturate(0.86);
+  filter: brightness(0.78) saturate(1.08);
   transition: opacity 1.4s ease;
 }
 
@@ -84,9 +84,9 @@ a:hover {
   z-index: -2;
   overflow: hidden;
   background:
-    radial-gradient(1200px 800px at 15% -10%, rgba(54, 83, 148, 0.34), transparent 60%),
-    radial-gradient(900px 700px at 100% 0%, rgba(255, 184, 107, 0.08), transparent 55%),
-    linear-gradient(180deg, rgba(7, 10, 18, 0.86) 0%, rgba(8, 12, 22, 0.9) 50%, rgba(6, 9, 17, 0.96) 100%);
+    radial-gradient(1200px 800px at 15% -10%, rgba(54, 83, 148, 0.2), transparent 60%),
+    radial-gradient(900px 700px at 100% 0%, rgba(255, 184, 107, 0.06), transparent 55%),
+    linear-gradient(180deg, rgba(7, 10, 18, 0.44) 0%, rgba(8, 12, 22, 0.56) 50%, rgba(6, 9, 17, 0.72) 100%);
 }
 
 .orb {

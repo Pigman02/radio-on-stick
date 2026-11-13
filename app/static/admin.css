@@ -1,0 +1,90 @@
+.admin-shell {
+  width: min(980px, calc(100% - 40px));
+  padding-bottom: 40px;
+}
+
+.admin-login-card {
+  width: min(480px, 100%);
+  margin: 8vh auto 0;
+}
+
+.admin-login-card h2 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.admin-login-card code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.admin-workbench {
+  padding: 24px;
+}
+
+.admin-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(17, 24, 40, 0.98), rgba(17, 24, 40, 0.92));
+  backdrop-filter: blur(8px);
+}
+
+.admin-tab {
+  max-width: 760px;
+}
+
+.admin-now {
+  font-size: 13px;
+}
+
+.admin-row {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-list {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+.admin-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.admin-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+
+.admin-tab .search-results {
+  max-height: 420px;
+}
+
+.admin-footer {
+  margin-top: 24px;
+}
+
+@media (max-width: 680px) {
+  .admin-shell {
+    width: min(100% - 24px, 980px);
+  }
+
+  .admin-login-card {
+    margin-top: 4vh;
+  }
+
+  .admin-workbench {
+    padding: 18px;
+  }
+
+  .admin-topbar .top-actions {
+    width: 100%;
+  }
+}
