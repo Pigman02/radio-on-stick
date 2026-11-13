@@ -9,5 +9,6 @@ data/*
 *.db-wal
 *.db-shm
 .pytest_cache/
+dist/
 .DS_Store
 Thumbs.db

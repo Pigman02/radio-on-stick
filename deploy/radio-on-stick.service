@@ -1,0 +1,44 @@
+[Unit]
+Description=Radio on Stick web radio
+Documentation=file:/opt/radio-on-stick/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=radio
+Group=radio
+WorkingDirectory=/opt/radio-on-stick
+EnvironmentFile=/etc/radio-on-stick.env
+ExecStart=/usr/bin/python3 -m app
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+
+# Keep the little box alive; the Python service is intentionally small.
+MemoryHigh=120M
+MemoryMax=160M
+TasksMax=64
+LimitNOFILE=256
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/radio-on-stick
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
