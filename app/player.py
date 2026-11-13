@@ -59,6 +59,8 @@ class Player:
         self._started_refresh: set[int] = set()
         self._resolver_lock = threading.Lock()
         self._resolvers: set[threading.Thread] = set()
+        self._background_slots = threading.BoundedSemaphore(4)
+        self._refresh_inflight: set[int] = set()
         self._last_maintenance = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -148,11 +150,22 @@ class Player:
             break
         if index >= len(playlist):
             self._rotation_index = index
+            self._trim_rotation_skip(playlist)
             return None, 0
         self._rotation_index = index + 1
+        self._trim_rotation_skip(playlist)
         chosen = playlist[index]
         track = self.db.get_track(str(chosen["id"]))
         return track, 0
+
+    def _trim_rotation_skip(self, playlist: list[dict[str, Any]]) -> None:
+        if not self._rotation_skip:
+            return
+        valid_ids = {str(item["id"]) for item in playlist}
+        self._rotation_skip &= valid_ids
+        for position, item in enumerate(playlist):
+            if position < self._rotation_index:
+                self._rotation_skip.discard(str(item["id"]))
 
     def _advance_state(self, reason: str) -> tuple[dict[str, Any] | None, int]:
         with self._lock:
@@ -160,14 +173,17 @@ class Player:
             self._finish_current(now)
             track, queue_id = self._pick_next()
             if track is None:
+                had_skip = bool(self._rotation_skip)
+                self._rotation_skip.clear()
                 if not self._track_id:
+                    if had_skip:
+                        self._save_state()
                     return None, self._seq
                 self._track_id = ""
                 self._started_at = 0
                 self._paused = False
                 self._paused_position = 0
                 self._audio_rev = 0
-                self._rotation_skip.clear()
                 self._seq += 1
                 self._save_state()
                 logger.info("player idle (%s)", reason)
@@ -246,6 +262,9 @@ class Player:
             track = self._current_track()
             if track is None or self._started_at <= 0:
                 if not self.db.list_playlist_summaries() and self.db.next_pending() is None:
+                    if self._rotation_skip:
+                        self._rotation_skip.clear()
+                        self._save_state()
                     return ""
                 return "start"
             now = self._now_ms()
@@ -258,19 +277,7 @@ class Player:
             return ""
 
     def ensure_started(self) -> None:
-        if self._paused:
-            return
-        if not self._advance_lock.acquire(blocking=False):
-            return
-        try:
-            reason = self._start_reason()
-            if not reason:
-                return
-            track, seq = self._advance_state(reason)
-            if track is not None:
-                self._resolve_track_audio(track, seq)
-        finally:
-            self._advance_lock.release()
+        self._ensure_state_only()
 
     def _ensure_state_only(self) -> None:
         """Advance state without blocking the caller on upstream network I/O."""
@@ -290,7 +297,7 @@ class Player:
 
     def tick(self) -> None:
         try:
-            self.ensure_started()
+            self._ensure_state_only()
         except Exception:
             logger.exception("player tick failed")
 
@@ -321,8 +328,8 @@ class Player:
     def skip(self, reason: str = "skip") -> dict[str, Any] | None:
         return self.advance(reason)
 
-    def skip_async(self, reason: str = "skip") -> None:
-        self._advance_state_async(reason)
+    def skip_async(self, reason: str = "skip") -> bool:
+        return self._advance_state_async(reason)
 
     def _peek_next(self) -> dict[str, Any] | None:
         queued = self.db.next_pending()
@@ -360,31 +367,52 @@ class Player:
             "cover_url": _safe_url(track.get("cover_url")),
         }
 
-    def _spawn_background(self, target: Callable[..., None], *args: Any) -> None:
+    def _spawn_background(self, target: Callable[..., None], *args: Any) -> bool:
+        if not self._background_slots.acquire(blocking=False):
+            logger.warning("background resolve queue full; skipping task")
+            return False
+
         def run() -> None:
             try:
                 target(*args)
             finally:
                 with self._resolver_lock:
                     self._resolvers.discard(threading.current_thread())
+                self._background_slots.release()
 
         thread = threading.Thread(target=run, name="radio-resolve", daemon=True)
         with self._resolver_lock:
             self._resolvers.add(thread)
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            with self._resolver_lock:
+                self._resolvers.discard(thread)
+            self._background_slots.release()
+            logger.exception("failed to start background resolver")
+            return False
+        return True
 
-    def _spawn_resolve(self, track: dict[str, Any], seq: int) -> None:
-        self._spawn_background(self._resolve_track_audio, track, seq)
+    def _spawn_resolve(self, track: dict[str, Any], seq: int) -> bool:
+        return self._spawn_background(self._resolve_track_audio, track, seq)
 
-    def _advance_state_async(self, reason: str) -> None:
+    def _advance_state_async(self, reason: str) -> bool:
         if not self._advance_lock.acquire(blocking=False):
-            return
+            return False
         try:
             track, seq = self._advance_state(reason)
             if track is not None:
                 self._spawn_resolve(track, seq)
+            return True
         finally:
             self._advance_lock.release()
+
+    def _refresh_audio_task(self, track: dict[str, Any], seq: int) -> None:
+        try:
+            self._refresh_audio(track, seq)
+        finally:
+            with self._lock:
+                self._refresh_inflight.discard(seq)
 
     def _refresh_audio(self, track: dict[str, Any], seq: int) -> None:
         with self._refresh_lock:
@@ -436,7 +464,7 @@ class Player:
                     )
                     duration = self._duration(track, self.config.default_duration_ms)
                     threshold = (
-                        5_000
+                        max(10_000, self.config.estimated_ended_min_sec * 1000)
                         if track.get("duration_estimated")
                         else min(30_000, int(duration * 0.5))
                     )
@@ -450,7 +478,13 @@ class Player:
         if event == "ended" and should_advance:
             self._advance_state_async("client-ended")
         elif event in {"error", "stalled"} and track is not None:
-            self._spawn_background(self._refresh_audio, track, seq)
+            with self._lock:
+                if seq in self._refresh_inflight:
+                    return self.snapshot(ensure=False)
+                self._refresh_inflight.add(seq)
+            if not self._spawn_background(self._refresh_audio_task, track, seq):
+                with self._lock:
+                    self._refresh_inflight.discard(seq)
         return self.snapshot(ensure=False)
 
     def upcoming(self, limit: int = 40) -> list[dict[str, Any]]:

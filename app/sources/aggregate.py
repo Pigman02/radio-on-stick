@@ -77,6 +77,9 @@ class TrackAggregator:
             max_workers=max(2, len(self.search_sources) + 1),
             thread_name_prefix="radio-search",
         )
+        self._search_slots = threading.BoundedSemaphore(
+            max(4, len(self.search_sources) * 3)
+        )
 
     def register_source(self, source: Any) -> None:
         if source not in self.search_sources:
@@ -107,24 +110,35 @@ class TrackAggregator:
             normalized.append(entry)
         return normalized
 
+    def _run_source(self, source: Any, query: str) -> list[dict[str, Any]]:
+        try:
+            return self._search_source(source, query)
+        finally:
+            self._search_slots.release()
+
     def _search_all(self, query: str) -> dict[str, list[dict[str, Any]]]:
         sources = list(self.search_sources)
         if not sources:
             return {}
         results: dict[str, list[dict[str, Any]]] = {}
-        futures = {
-            self._source_name(source): self._executor.submit(
-                self._search_source, source, query
-            )
-            for source in sources
-        }
+        futures = {}
+        for source in sources:
+            name = self._source_name(source)
+            if not self._search_slots.acquire(blocking=False):
+                logger.warning("%s search skipped: queue full", name)
+                results[name] = []
+                continue
+            try:
+                futures[name] = self._executor.submit(self._run_source, source, query)
+            except Exception:
+                self._search_slots.release()
+                raise
         deadline = time.monotonic() + max(1.0, self.config.upstream_timeout + 1.0)
         for name, future in futures.items():
             remaining = max(0.05, deadline - time.monotonic())
             try:
                 results[name] = future.result(timeout=remaining)
             except Exception as exc:
-                future.cancel()
                 logger.warning("%s search timeout: %s", name, exc)
                 results[name] = []
         return results

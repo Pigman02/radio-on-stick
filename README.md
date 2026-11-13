@@ -97,6 +97,7 @@ python tools/radioctl.py now
 | `RADIO_LISTENER_TTL` | `30` | 听众在线判定窗口秒数 |
 | `RADIO_BANNED_WORDS` | 空 | 逗号分隔的屏蔽词 |
 | `RADIO_DEFAULT_DURATION_MS` | `240000` | 无时长元数据时的默认时长 |
+| `RADIO_ESTIMATED_ENDED_MIN` | `60` | 估算时长曲目接受客户端 ended 的最短播放秒数 |
 | `RADIO_LOG_LEVEL` | `INFO` | 日志级别 |
 
 点歌和留言使用 60 秒滑动窗口：同一 IP 每分钟最多点 5 首、留言 10 条，第 6 首/第 11 条才会被限制，不会第一次操作就锁死。
