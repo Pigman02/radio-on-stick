@@ -10,7 +10,6 @@ const stationSubtitle = $("stationSubtitle");
 const noticeBar = $("noticeBar");
 const syncStatus = $("syncStatus");
 const nicknameBtn = $("nicknameBtn");
-const adminBtn = $("adminBtn");
 const livePill = $("livePill");
 const title = $("title");
 const artist = $("artist");
@@ -51,37 +50,6 @@ const nicknameInput = $("nicknameInput");
 const nicknameSave = $("nicknameSave");
 const nicknameStatus = $("nicknameStatus");
 
-const adminModal = $("adminModal");
-const adminClose = $("adminClose");
-const adminLogin = $("adminLogin");
-const adminToken = $("adminToken");
-const adminLoginBtn = $("adminLoginBtn");
-const adminLoginStatus = $("adminLoginStatus");
-const adminPanel = $("adminPanel");
-const adminNow = $("adminNow");
-const adminQueue = $("adminQueue");
-const adminMessages = $("adminMessages");
-const adminSkip = $("adminSkip");
-const adminPause = $("adminPause");
-const adminResume = $("adminResume");
-const adminClearQueue = $("adminClearQueue");
-const adminSearchForm = $("adminSearchForm");
-const adminSearchInput = $("adminSearchInput");
-const adminSearchStatus = $("adminSearchStatus");
-const adminSearchResults = $("adminSearchResults");
-const setStationName = $("setStationName");
-const setSubtitle = $("setSubtitle");
-const setPageTitle = $("setPageTitle");
-const setNotice = $("setNotice");
-const setBgInterval = $("setBgInterval");
-const saveSettings = $("saveSettings");
-const settingsStatus = $("settingsStatus");
-const bgFile = $("bgFile");
-const bgUpload = $("bgUpload");
-const bgStatus = $("bgStatus");
-const bgGallery = $("bgGallery");
-const adminLogout = $("adminLogout");
-
 const state = {
   now: null,
   seq: null,
@@ -121,9 +89,6 @@ const state = {
   requestTs: Date.now() - 5000,
   messageBusy: false,
   messageTs: Date.now() - 5000,
-  adminToken: "",
-  adminBusy: false,
-  adminTab: "control",
 };
 
 function clamp(value, min, max) {
@@ -142,23 +107,6 @@ function storageSet(key, value) {
   try {
     if (value === null) localStorage.removeItem(key);
     else localStorage.setItem(key, value);
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-function sessionGet(key) {
-  try {
-    return sessionStorage.getItem(key);
-  } catch (_) {
-    return null;
-  }
-}
-
-function sessionSet(key, value) {
-  try {
-    if (value === null) sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, value);
   } catch (_) {
     /* ignore */
   }
@@ -1063,8 +1011,7 @@ async function submitMessage(event) {
 /* ---------- modals ---------- */
 
 function updateModalState() {
-  const open =
-    !nicknameModal.classList.contains("hidden") || !adminModal.classList.contains("hidden");
+  const open = !nicknameModal.classList.contains("hidden");
   document.body.classList.toggle("modal-open", open);
 }
 
@@ -1076,380 +1023,6 @@ function showModal(element) {
 function hideModal(element) {
   element.classList.add("hidden");
   updateModalState();
-}
-
-/* ---------- admin ---------- */
-
-function adminHeaders(extra = {}) {
-  return { ...extra, Authorization: `Bearer ${state.adminToken}` };
-}
-
-async function adminFetch(path, options = {}) {
-  const headers = adminHeaders(options.headers || {});
-  return fetchJSON(path, { ...options, headers });
-}
-
-async function adminJson(path, payload) {
-  return adminFetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {}),
-  });
-}
-
-function showAdminLogin() {
-  adminLogin.classList.remove("hidden");
-  adminPanel.classList.add("hidden");
-}
-
-function showAdminPanel() {
-  adminLogin.classList.add("hidden");
-  adminPanel.classList.remove("hidden");
-}
-
-function openAdmin() {
-  showModal(adminModal);
-  if (state.adminToken) {
-    showAdminPanel();
-    loadAdminState();
-  } else {
-    showAdminLogin();
-    setTimeout(() => adminToken.focus(), 50);
-  }
-}
-
-function adminLogoutNow() {
-  state.adminToken = "";
-  sessionSet("radio.adminToken", null);
-  adminToken.value = "";
-  showAdminLogin();
-}
-
-async function adminLoginNow() {
-  const token = adminToken.value.trim();
-  if (!token) {
-    adminLoginStatus.textContent = "请输入管理 token";
-    adminLoginStatus.dataset.tone = "error";
-    return;
-  }
-  state.adminToken = token;
-  adminLoginStatus.textContent = "正在验证…";
-  adminLoginStatus.dataset.tone = "busy";
-  adminLoginBtn.disabled = true;
-  try {
-    const data = await adminFetch("/api/admin/state");
-    sessionSet("radio.adminToken", token);
-    adminLoginStatus.textContent = "";
-    showAdminPanel();
-    applyAdminState(data);
-  } catch (error) {
-    state.adminToken = "";
-    sessionSet("radio.adminToken", null);
-    adminLoginStatus.textContent = errorText(error, "登录失败");
-    adminLoginStatus.dataset.tone = "error";
-  } finally {
-    adminLoginBtn.disabled = false;
-  }
-}
-
-async function loadAdminState() {
-  if (!state.adminToken) return;
-  try {
-    applyAdminState(await adminFetch("/api/admin/state"));
-  } catch (error) {
-    if (error.status === 401) {
-      adminLogoutNow();
-      adminLoginStatus.textContent = "管理 token 已失效";
-      adminLoginStatus.dataset.tone = "error";
-    } else {
-      adminSearchStatus.textContent = errorText(error, "加载管理状态失败");
-      adminSearchStatus.dataset.tone = "error";
-    }
-  }
-}
-
-function adminRow(titleText, subText, actionText, action) {
-  const row = document.createElement("div");
-  row.className = "admin-row";
-  const copy = document.createElement("div");
-  copy.className = "admin-row-copy";
-  const titleEl = document.createElement("span");
-  titleEl.className = "admin-row-title";
-  titleEl.textContent = titleText;
-  const subEl = document.createElement("span");
-  subEl.className = "admin-row-sub";
-  subEl.textContent = subText;
-  copy.appendChild(titleEl);
-  copy.appendChild(subEl);
-  row.appendChild(copy);
-  if (actionText && action) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = actionText;
-    button.addEventListener("click", action);
-    row.appendChild(button);
-  }
-  return row;
-}
-
-function applyAdminState(data) {
-  const now = data.now || {};
-  adminNow.textContent = "";
-  if (now.track) {
-    const strong = document.createElement("strong");
-    strong.textContent = `${now.track.title} / ${now.track.artist || "未知歌手"}`;
-    adminNow.appendChild(strong);
-    const status = document.createElement("span");
-    status.textContent = now.paused ? " · 已暂停" : " · 播放中";
-    adminNow.appendChild(status);
-    if (now.next) {
-      const next = document.createElement("div");
-      next.textContent = `下一首：${now.next.title} / ${now.next.artist || "未知歌手"}`;
-      adminNow.appendChild(next);
-    }
-  } else {
-    adminNow.textContent = "当前没有播放。添加曲目后会自动开始。";
-  }
-
-  adminQueue.textContent = "";
-  const queue = data.queue || [];
-  if (!queue.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "队列为空";
-    adminQueue.appendChild(empty);
-  } else {
-    for (const item of queue) {
-      const sub = [item.artist || "未知歌手", item.status === "playing" ? "播放中" : "等待中"];
-      if (item.nickname) sub.push(`by ${item.nickname}`);
-      adminQueue.appendChild(adminRow(item.title || "未知曲目", sub.join(" · "), "", null));
-    }
-  }
-
-  adminMessages.textContent = "";
-  const messages = data.messages || [];
-  if (!messages.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "还没有留言";
-    adminMessages.appendChild(empty);
-  } else {
-    for (const item of messages) {
-      adminMessages.appendChild(
-        adminRow(
-          item.nickname || "匿名",
-          `${item.body || ""}${item.created_at ? ` · ${fmtRelative(item.created_at)}` : ""}`,
-          "隐藏",
-          async () => {
-            await adminJson("/api/admin/hide-message", { id: item.id });
-            await loadAdminState();
-            loadSidebar();
-          }
-        )
-      );
-    }
-  }
-
-  const settings = data.settings || {};
-  setStationName.value = settings.station_name || "";
-  setSubtitle.value = settings.subtitle || "";
-  setPageTitle.value = settings.page_title || "";
-  setNotice.value = settings.notice || "";
-  setBgInterval.value = String(settings.background_interval_sec || 300);
-
-  renderAdminGallery(data.backgrounds || []);
-}
-
-function renderAdminGallery(items) {
-  bgGallery.textContent = "";
-  if (!items.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "还没有上传背景";
-    bgGallery.appendChild(empty);
-    return;
-  }
-  for (const item of items) {
-    const thumb = document.createElement("div");
-    thumb.className = "bg-thumb";
-    const image = document.createElement("img");
-    image.src = item.url;
-    image.alt = "";
-    thumb.appendChild(image);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "×";
-    button.title = "删除背景";
-    button.addEventListener("click", async () => {
-      try {
-        await adminJson("/api/admin/background/delete", { name: item.name });
-        await loadConfig();
-        await loadAdminState();
-        bgStatus.textContent = "已删除";
-        bgStatus.dataset.tone = "ok";
-      } catch (error) {
-        bgStatus.textContent = errorText(error, "删除失败");
-        bgStatus.dataset.tone = "error";
-      }
-    });
-    thumb.appendChild(button);
-    bgGallery.appendChild(thumb);
-  }
-}
-
-async function adminAction(path, successText) {
-  if (state.adminBusy) return;
-  state.adminBusy = true;
-  try {
-    await adminFetch(path, { method: "POST" });
-    await loadAdminState();
-    pollSoon();
-    if (successText) {
-      adminSearchStatus.textContent = successText;
-      adminSearchStatus.dataset.tone = "ok";
-    }
-  } catch (error) {
-    adminSearchStatus.textContent = errorText(error);
-    adminSearchStatus.dataset.tone = "error";
-  } finally {
-    state.adminBusy = false;
-  }
-}
-
-async function savePageSettings() {
-  settingsStatus.textContent = "正在保存…";
-  settingsStatus.dataset.tone = "busy";
-  try {
-    const data = await adminJson("/api/admin/settings", {
-      station_name: setStationName.value,
-      subtitle: setSubtitle.value,
-      page_title: setPageTitle.value,
-      notice: setNotice.value,
-      background_interval_sec: Number(setBgInterval.value),
-    });
-    settingsStatus.textContent = "已保存";
-    settingsStatus.dataset.tone = "ok";
-    applyConfig({ ...(state.uiConfig || {}), ...(data.settings || {}), backgrounds: state.backgrounds });
-    await loadConfig();
-  } catch (error) {
-    settingsStatus.textContent = errorText(error, "保存失败");
-    settingsStatus.dataset.tone = "error";
-  }
-}
-
-async function uploadBackground() {
-  const file = bgFile.files && bgFile.files[0];
-  if (!file) {
-    bgStatus.textContent = "请选择图片";
-    bgStatus.dataset.tone = "error";
-    return;
-  }
-  if (file.size > 8 * 1024 * 1024) {
-    bgStatus.textContent = "图片不能超过 8MB";
-    bgStatus.dataset.tone = "error";
-    return;
-  }
-  bgStatus.textContent = "正在上传…";
-  bgStatus.dataset.tone = "busy";
-  bgUpload.disabled = true;
-  try {
-    const response = await fetch("/api/admin/background", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${state.adminToken}`,
-        "Content-Type": file.type || "application/octet-stream",
-      },
-      body: file,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(data.message || `HTTP ${response.status}`);
-      error.status = response.status;
-      error.data = data;
-      throw error;
-    }
-    bgFile.value = "";
-    bgStatus.textContent = "上传成功";
-    bgStatus.dataset.tone = "ok";
-    await loadConfig();
-    applyRandomBackground(true);
-    await loadAdminState();
-  } catch (error) {
-    bgStatus.textContent = errorText(error, "上传失败");
-    bgStatus.dataset.tone = "error";
-  } finally {
-    bgUpload.disabled = false;
-  }
-}
-
-async function adminSearch(event) {
-  event.preventDefault();
-  const query = adminSearchInput.value.trim();
-  if (!query) return;
-  adminSearchStatus.textContent = "正在搜索…";
-  adminSearchStatus.dataset.tone = "busy";
-  adminSearchResults.textContent = "";
-  try {
-    const data = await fetchJSON(`/api/search?q=${encodeURIComponent(query)}`, {
-      timeout: 25_000,
-    });
-    const results = data.results || [];
-    adminSearchStatus.textContent = `找到 ${results.length} 首`;
-    adminSearchStatus.dataset.tone = "ok";
-    for (const item of results) {
-      const row = document.createElement("div");
-      row.className = "search-result";
-      const image = document.createElement("img");
-      image.className = "search-cover";
-      image.src = item.cover_url || "/placeholder.svg";
-      image.alt = "";
-      row.appendChild(image);
-      const copy = document.createElement("span");
-      copy.className = "search-copy";
-      const name = document.createElement("span");
-      name.className = "search-title";
-      name.textContent = item.title;
-      const sub = document.createElement("span");
-      sub.className = "search-sub";
-      sub.textContent = [item.artist || "未知歌手", item.source_label || item.source].join(" · ");
-      copy.appendChild(name);
-      copy.appendChild(sub);
-      row.appendChild(copy);
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "assign-btn";
-      button.textContent = "加入列表";
-      button.addEventListener("click", async () => {
-        button.disabled = true;
-        try {
-          await adminJson("/api/admin/track", { candidate_id: item.candidate_id });
-          adminSearchStatus.textContent = `已加入播放列表：${item.title}`;
-          adminSearchStatus.dataset.tone = "ok";
-          await loadAdminState();
-          pollSoon();
-        } catch (error) {
-          adminSearchStatus.textContent = errorText(error, "加入失败");
-          adminSearchStatus.dataset.tone = "error";
-          button.disabled = false;
-        }
-      });
-      row.appendChild(button);
-      adminSearchResults.appendChild(row);
-    }
-  } catch (error) {
-    adminSearchStatus.textContent = errorText(error, "搜索失败");
-    adminSearchStatus.dataset.tone = "error";
-  }
-}
-
-function switchAdminTab(tab) {
-  state.adminTab = tab;
-  for (const button of adminModal.querySelectorAll(".admin-tabs button")) {
-    button.classList.toggle("active", button.dataset.tab === tab);
-  }
-  for (const section of adminModal.querySelectorAll(".admin-tab")) {
-    section.classList.toggle("hidden", section.id !== `tab-${tab}`);
-  }
 }
 
 /* ---------- render loop ---------- */
@@ -1515,34 +1088,9 @@ searchForm.addEventListener("submit", performSearch);
 requestBtn.addEventListener("click", requestSelected);
 messageForm.addEventListener("submit", submitMessage);
 
-adminBtn.addEventListener("click", openAdmin);
-adminClose.addEventListener("click", () => hideModal(adminModal));
-adminLoginBtn.addEventListener("click", adminLoginNow);
-adminToken.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") adminLoginNow();
-});
-adminLogout.addEventListener("click", adminLogoutNow);
-adminSkip.addEventListener("click", () => adminAction("/api/admin/skip", "已切歌"));
-adminPause.addEventListener("click", () => adminAction("/api/admin/pause", "已暂停"));
-adminResume.addEventListener("click", () => adminAction("/api/admin/resume", "已恢复"));
-adminClearQueue.addEventListener("click", () =>
-  adminAction("/api/admin/clear-queue", "已清空队列")
-);
-saveSettings.addEventListener("click", savePageSettings);
-bgUpload.addEventListener("click", uploadBackground);
-adminSearchForm.addEventListener("submit", adminSearch);
-for (const button of adminModal.querySelectorAll(".admin-tabs button")) {
-  button.addEventListener("click", () => switchAdminTab(button.dataset.tab));
-}
-adminModal.addEventListener("click", (event) => {
-  if (event.target === adminModal) hideModal(adminModal);
-});
-
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (!adminModal.classList.contains("hidden")) {
-    hideModal(adminModal);
-  } else if (!nicknameModal.classList.contains("hidden") && state.nickname) {
+  if (!nicknameModal.classList.contains("hidden") && state.nickname) {
     hideModal(nicknameModal);
   }
 });
@@ -1619,7 +1167,6 @@ document.addEventListener("visibilitychange", () => {
 /* ---------- init ---------- */
 
 loadNickname();
-state.adminToken = sessionGet("radio.adminToken") || "";
 
 const savedVolume = storageGet("radio.volume");
 if (savedVolume !== null) volumeEl.value = savedVolume;

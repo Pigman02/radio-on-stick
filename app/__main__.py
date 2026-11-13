@@ -27,7 +27,7 @@ def main() -> int:
     app.player.start()
     server = make_server(app)
     host, port = server.server_address[:2]
-    logger.info("Radio on Stick listening on http://%s:%s", host, port)
+    logger.info("radio listening on http://%s:%s", host, port)
 
     stop_event = threading.Event()
 

@@ -51,24 +51,24 @@ class RateLimiter:
         self._last_cleanup = now
         self.db.cleanup_rate_events(now - 2 * DAY_MS)
 
-    def _check(self, key: str, now: int) -> RateDecision:
-        cooldown_ms = max(0, self.config.request_cooldown_sec) * 1000
-        if cooldown_ms:
-            events = self.db.rate_events_since(key, ACT_REQUEST, now - cooldown_ms)
-            if events:
-                remaining = cooldown_ms - (now - events[-1])
-                return RateDecision(False, "cooldown", max(1, remaining // 1000))
-
-        daily = max(1, self.config.request_daily_limit)
-        events = self.db.rate_events_since(key, ACT_REQUEST, now - DAY_MS)
-        if len(events) >= daily:
-            remaining = DAY_MS - (now - events[0])
-            return RateDecision(False, "daily_limit", max(1, remaining // 1000))
-
-        pending = self.db.count_pending_for_key(key)
-        if pending >= max(1, self.config.request_pending_limit):
-            return RateDecision(False, "too_many_pending", 30)
+    def _window_decision(
+        self, key: str, action: str, limit: int, now: int
+    ) -> RateDecision:
+        window = 60_000
+        events = self.db.rate_events_since(key, action, now - window)
+        if len(events) >= max(1, limit):
+            remaining = window - (now - events[0])
+            return RateDecision(
+                False,
+                f"{action}_limit",
+                max(1, remaining // 1000),
+            )
         return RateDecision(True)
+
+    def _check(self, key: str, now: int) -> RateDecision:
+        return self._window_decision(
+            key, ACT_REQUEST, self.config.request_per_min, now
+        )
 
     def precheck_request(self, key: str, now: int | None = None) -> RateDecision:
         now = self._now_ms() if now is None else int(now)
@@ -110,18 +110,10 @@ class RateLimiter:
     def consume_message(self, key: str, now: int | None = None) -> RateDecision:
         now = self._now_ms() if now is None else int(now)
         with self._lock:
-            cooldown_ms = max(0, self.config.message_cooldown_sec) * 1000
-            if cooldown_ms:
-                events = self.db.rate_events_since(key, ACT_MESSAGE, now - cooldown_ms)
-                if events:
-                    remaining = cooldown_ms - (now - events[-1])
-                    return RateDecision(False, "message_cooldown", max(1, remaining // 1000))
-
-            events = self.db.rate_events_since(key, ACT_MESSAGE, now - DAY_MS)
-            if len(events) >= max(1, self.config.message_daily_limit):
-                remaining = DAY_MS - (now - events[0])
-                return RateDecision(False, "message_daily_limit", max(1, remaining // 1000))
-
-            self.db.add_rate_event(key, ACT_MESSAGE, now)
-            self._cleanup(now)
-            return RateDecision(True)
+            decision = self._window_decision(
+                key, ACT_MESSAGE, self.config.message_per_min, now
+            )
+            if decision.allowed:
+                self.db.add_rate_event(key, ACT_MESSAGE, now)
+                self._cleanup(now)
+            return decision

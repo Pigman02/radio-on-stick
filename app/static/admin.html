@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a12">
+  <title>管理面板</title>
+  <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css?v=4">
+  <link rel="stylesheet" href="/admin.css?v=1">
+</head>
+<body class="admin-page">
+  <div class="backdrop" aria-hidden="true">
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="grid-lines"></div>
+  </div>
+
+  <div class="shell admin-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="brand-text">
+          <h1>管理面板</h1>
+          <p class="station-subtitle">播放控制、页面文字、背景与留言</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="adminStatus" class="sync-pill" data-state="offline">未登录</span>
+        <a class="text-btn" href="/">返回电台</a>
+      </div>
+    </header>
+
+    <section id="loginCard" class="card admin-login-card">
+      <p class="kicker">ADMIN</p>
+      <h2>输入管理 token</h2>
+      <p class="modal-copy">token 来自服务端环境变量 <code>RADIO_ADMIN_TOKEN</code>，只保存在当前浏览器会话。</p>
+      <input id="adminToken" type="password" placeholder="管理 token" autocomplete="current-password">
+      <div class="modal-actions">
+        <button id="adminLoginBtn" class="primary-btn" type="button">登录</button>
+      </div>
+      <p id="adminLoginStatus" class="form-status" role="status"></p>
+    </section>
+
+    <div id="adminPanel" class="hidden">
+      <div class="card admin-workbench">
+        <div class="admin-tabs" role="tablist">
+          <button type="button" data-tab="control" class="active">播放</button>
+          <button type="button" data-tab="text">页面文字</button>
+          <button type="button" data-tab="background">背景</button>
+          <button type="button" data-tab="messages">留言</button>
+        </div>
+
+        <section id="tab-control" class="admin-tab">
+          <div id="adminNow" class="admin-now"></div>
+          <div class="admin-actions">
+            <button id="adminSkip" class="primary-btn" type="button">切歌</button>
+            <button id="adminPause" type="button">暂停</button>
+            <button id="adminResume" type="button">恢复</button>
+            <button id="adminClearQueue" type="button">清空队列</button>
+          </div>
+
+          <h3>队列</h3>
+          <div id="adminQueue" class="admin-list"></div>
+
+          <h3>加入播放列表</h3>
+          <form id="adminSearchForm" class="search-form" autocomplete="off">
+            <input id="adminSearchInput" maxlength="80" placeholder="搜索歌名或歌手">
+            <button type="submit">搜索</button>
+          </form>
+          <p id="adminSearchStatus" class="form-status" role="status"></p>
+          <div id="adminSearchResults" class="search-results"></div>
+        </section>
+
+        <section id="tab-text" class="admin-tab hidden">
+          <label>电台名称<input id="setStationName" maxlength="40"></label>
+          <label>副标题<input id="setSubtitle" maxlength="80"></label>
+          <label>页面标题<input id="setPageTitle" maxlength="60"></label>
+          <label>公告<textarea id="setNotice" maxlength="300" rows="3"></textarea></label>
+          <label>背景轮换间隔（秒）<input id="setBgInterval" type="number" min="30" max="86400"></label>
+          <div class="modal-actions">
+            <button id="saveSettings" class="primary-btn" type="button">保存页面设置</button>
+          </div>
+          <p id="settingsStatus" class="form-status" role="status"></p>
+        </section>
+
+        <section id="tab-background" class="admin-tab hidden">
+          <label>上传背景图片（JPG / PNG / WEBP）<input id="bgFile" type="file" accept="image/jpeg,image/png,image/webp"></label>
+          <div class="modal-actions">
+            <button id="bgUpload" class="primary-btn" type="button">上传背景</button>
+          </div>
+          <p id="bgStatus" class="form-status" role="status"></p>
+          <div id="bgGallery" class="bg-gallery"></div>
+        </section>
+
+        <section id="tab-messages" class="admin-tab hidden">
+          <div id="adminMessages" class="admin-list"></div>
+        </section>
+
+        <div class="admin-footer">
+          <button id="adminLogout" class="ghost-btn" type="button">退出管理</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin.js?v=1"></script>
+</body>
+</html>

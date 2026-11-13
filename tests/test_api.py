@@ -88,13 +88,10 @@ class ApiTests(unittest.TestCase):
             db_path=data_dir / "test.db",
             static_dir=BASE_DIR / "app" / "static",
             admin_token="secret",
-            request_cooldown_sec=0,
-            request_daily_limit=100,
-            request_pending_limit=10,
+            request_per_min=100,
+            message_per_min=100,
             queue_max=2,
             duplicate_window_sec=3600,
-            message_cooldown_sec=0,
-            message_daily_limit=100,
             search_per_min=100,
             min_form_ms=0,
             ip_hash_salt="test-salt",
@@ -327,9 +324,13 @@ class ApiTests(unittest.TestCase):
             token="secret",
         )
         self.assertEqual(status, 200, data)
-        with self.assertRaises(urllib.error.HTTPError) as context:
+        try:
             urllib.request.urlopen(f"{self.base}{background['url']}", timeout=10)
-        self.assertEqual(context.exception.code, 404)
+        except urllib.error.HTTPError as exc:
+            self.assertEqual(exc.code, 404)
+            exc.close()
+        else:
+            self.fail("background still accessible after delete")
 
     def test_static_index(self):
         with urllib.request.urlopen(f"{self.base}/", timeout=10) as response:
@@ -338,6 +339,14 @@ class ApiTests(unittest.TestCase):
             self.assertIn("app.js", body)
             self.assertIn("nicknameModal", body)
             self.assertNotIn("ON AIR", body)
+            self.assertNotIn("adminBtn", body)
+
+    def test_admin_page(self):
+        with urllib.request.urlopen(f"{self.base}/admin", timeout=10) as response:
+            body = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("admin.js", body)
+            self.assertIn("adminLogin", body)
 
 
 if __name__ == "__main__":

@@ -30,69 +30,49 @@ class RateLimiterTests(unittest.TestCase):
         self.db.close()
         self.tmp.cleanup()
 
-    def test_cooldown(self):
+    def test_request_limit_allows_five_per_minute(self):
         limiter = RateLimiter(
             self.db,
-            Config(request_cooldown_sec=60, request_daily_limit=10, request_pending_limit=5),
+            Config(request_per_min=5, message_per_min=10),
             clock=self.clock,
         )
-        self.assertTrue(limiter.consume_request("k").allowed)
+        for _ in range(5):
+            self.assertTrue(limiter.consume_request("k").allowed)
+            self.clock.advance(1)
         denied = limiter.consume_request("k")
         self.assertFalse(denied.allowed)
-        self.assertEqual(denied.reason, "cooldown")
+        self.assertEqual(denied.reason, "request_limit")
         self.assertGreater(denied.retry_after, 0)
 
         self.clock.advance(61)
         self.assertTrue(limiter.consume_request("k").allowed)
 
-    def test_daily_limit(self):
+    def test_message_limit_allows_ten_per_minute(self):
         limiter = RateLimiter(
             self.db,
-            Config(request_cooldown_sec=0, request_daily_limit=2, request_pending_limit=5),
+            Config(request_per_min=5, message_per_min=10),
+            clock=self.clock,
+        )
+        for _ in range(10):
+            self.assertTrue(limiter.consume_message("m").allowed)
+            self.clock.advance(2)
+        denied = limiter.consume_message("m")
+        self.assertFalse(denied.allowed)
+        self.assertEqual(denied.reason, "message_limit")
+        self.assertGreater(denied.retry_after, 0)
+
+        self.clock.advance(61)
+        self.assertTrue(limiter.consume_message("m").allowed)
+
+    def test_requests_are_not_blocked_after_one(self):
+        limiter = RateLimiter(
+            self.db,
+            Config(request_per_min=5),
             clock=self.clock,
         )
         self.assertTrue(limiter.consume_request("k").allowed)
-        self.clock.advance(1)
         self.assertTrue(limiter.consume_request("k").allowed)
-        self.clock.advance(1)
-        denied = limiter.consume_request("k")
-        self.assertFalse(denied.allowed)
-        self.assertEqual(denied.reason, "daily_limit")
-
-    def test_pending_limit(self):
-        self.db.insert_track(
-            {
-                "id": "t1",
-                "source": "netease",
-                "source_id": "t1",
-                "title": "A",
-                "duration_ms": 1000,
-                "enabled": True,
-                "created_at": 1,
-            }
-        )
-        self.db.enqueue("t1", "k", "n", "m")
-        self.db.enqueue("t1", "k", "n", "m")
-        limiter = RateLimiter(
-            self.db,
-            Config(request_cooldown_sec=0, request_daily_limit=10, request_pending_limit=2),
-            clock=self.clock,
-        )
-        decision = limiter.precheck_request("k")
-        self.assertFalse(decision.allowed)
-        self.assertEqual(decision.reason, "too_many_pending")
-
-    def test_report_limit(self):
-        limiter = RateLimiter(
-            self.db,
-            Config(report_limit_per_min=2),
-            clock=self.clock,
-        )
-        self.assertTrue(limiter.consume_report("r").allowed)
-        self.assertTrue(limiter.consume_report("r").allowed)
-        denied = limiter.consume_report("r")
-        self.assertFalse(denied.allowed)
-        self.assertEqual(denied.reason, "report_limit")
+        self.assertTrue(limiter.consume_request("k").allowed)
 
     def test_search_limit(self):
         limiter = RateLimiter(
@@ -106,30 +86,17 @@ class RateLimiterTests(unittest.TestCase):
         self.assertFalse(denied.allowed)
         self.assertEqual(denied.reason, "search_limit")
 
-    def test_message_cooldown_and_daily_limit(self):
+    def test_report_limit(self):
         limiter = RateLimiter(
             self.db,
-            Config(message_cooldown_sec=30, message_daily_limit=10),
+            Config(report_limit_per_min=2),
             clock=self.clock,
         )
-        self.assertTrue(limiter.consume_message("m").allowed)
-        denied = limiter.consume_message("m")
+        self.assertTrue(limiter.consume_report("r").allowed)
+        self.assertTrue(limiter.consume_report("r").allowed)
+        denied = limiter.consume_report("r")
         self.assertFalse(denied.allowed)
-        self.assertEqual(denied.reason, "message_cooldown")
-
-        self.clock.advance(31)
-        self.assertTrue(limiter.consume_message("m").allowed)
-
-        daily = RateLimiter(
-            self.db,
-            Config(message_cooldown_sec=0, message_daily_limit=1),
-            clock=self.clock,
-        )
-        self.clock.advance(1)
-        self.assertTrue(daily.consume_message("d").allowed)
-        denied = daily.consume_message("d")
-        self.assertFalse(denied.allowed)
-        self.assertEqual(denied.reason, "message_daily_limit")
+        self.assertEqual(denied.reason, "report_limit")
 
     def test_ip_key_is_deterministic(self):
         self.assertEqual(make_ip_key("1.2.3.4", "salt"), make_ip_key("1.2.3.4", "salt"))
