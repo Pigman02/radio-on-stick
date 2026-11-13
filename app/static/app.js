@@ -78,7 +78,6 @@ const state = {
   sidebarLoading: false,
   showTranslation: true,
   nickname: "",
-  listenerId: "",
   uiConfig: null,
   backgrounds: [],
   bgIntervalSec: 300,
@@ -114,22 +113,6 @@ function storageSet(key, value) {
   } catch (_) {
     /* ignore */
   }
-}
-
-function ensureListenerId() {
-  const existing = storageGet("radio.listenerId") || "";
-  if (/^[A-Za-z0-9_-]{8,64}$/.test(existing)) {
-    state.listenerId = existing;
-    return;
-  }
-  let id = "";
-  if (window.crypto && typeof window.crypto.randomUUID === "function") {
-    id = window.crypto.randomUUID().replace(/-/g, "");
-  } else {
-    id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
-  }
-  state.listenerId = id;
-  storageSet("radio.listenerId", id);
 }
 
 async function fetchJSON(url, options = {}) {
@@ -215,7 +198,7 @@ async function voteSkip() {
     const data = await fetchJSON("/api/vote-skip", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lid: state.listenerId }),
+      body: JSON.stringify({}),
       timeout: 10_000,
     });
     if (data.now) applyNow(data.now);
@@ -636,10 +619,7 @@ async function pollNow() {
   clearTimeout(state.pollTimer);
   const started = performance.now();
   try {
-    const data = await fetchJSON(
-      `/now.json?lid=${encodeURIComponent(state.listenerId)}`,
-      { timeout: 8_000 }
-    );
+    const data = await fetchJSON("/now.json", { timeout: 8_000 });
     const finished = performance.now();
     const sample = data.server_time_ms + (finished - started) / 2 - Date.now();
     state.clockOffset = state.clockOffset ? state.clockOffset * 0.82 + sample * 0.18 : sample;
@@ -829,7 +809,7 @@ function renderQueue(items) {
         await fetchJSON("/api/queue/pin", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ queue_id: item.id, lid: state.listenerId }),
+          body: JSON.stringify({ queue_id: item.id }),
           timeout: 10_000,
         });
         await loadSidebar();
@@ -883,10 +863,7 @@ async function loadSidebar() {
   if (state.sidebarLoading) return;
   state.sidebarLoading = true;
   try {
-    const data = await fetchJSON(
-      `/api/state?lid=${encodeURIComponent(state.listenerId)}`,
-      { timeout: 8_000 }
-    );
+    const data = await fetchJSON("/api/state", { timeout: 8_000 });
     renderQueue(data.queue || []);
     renderMessages(data.messages || []);
     if (data.now && data.now.queue) {
@@ -1262,7 +1239,6 @@ document.addEventListener("visibilitychange", () => {
 /* ---------- init ---------- */
 
 loadNickname();
-ensureListenerId();
 
 const savedVolume = storageGet("radio.volume");
 if (savedVolume !== null) volumeEl.value = savedVolume;

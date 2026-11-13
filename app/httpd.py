@@ -192,21 +192,13 @@ class RadioHandler(BaseHTTPRequestHandler):
     def _ip_key(self) -> str:
         return make_ip_key(self._client_ip(), self.app.config.ip_hash_salt)
 
-    def _voter_key(self, value: Any) -> str:
-        text = str(value or "").strip()
-        if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", text):
-            return f"v:{text}"
+    def _voter_key(self, value: Any = None) -> str:
+        # One listener/voter per network address. This avoids counting
+        # multiple tabs on the same device as different listeners.
         return f"ip:{self._ip_key()}"
 
-    def _query_listener(self, query_string: str) -> str | None:
-        params = urllib.parse.parse_qs(query_string)
-        values = params.get("lid") or []
-        if not values:
-            return None
-        text = str(values[0] or "").strip()
-        if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", text):
-            return None
-        key = f"v:{text}"
+    def _query_listener(self, query_string: str) -> str:
+        key = f"ip:{self._ip_key()}"
         self.app.listeners.touch(key)
         return key
 
