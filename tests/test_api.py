@@ -1,0 +1,344 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from app.app import build_app
+from app.config import BASE_DIR, Config
+from app.db import now_ms
+from app.httpd import make_server
+
+
+class FakeAggregator:
+    def __init__(self, db) -> None:
+        self.db = db
+        self.counter = 0
+        self.last_query = ""
+
+    def search(self, query, limit=None):
+        self.last_query = query
+        return [
+            {
+                "candidate_id": "a" * 32,
+                "source": "netease",
+                "source_label": "网易云音乐",
+                "title": query,
+                "artist": "Test Artist",
+                "album": "Test Album",
+                "duration_ms": 10_000,
+                "duration_estimated": False,
+                "cover_url": "https://example.invalid/cover.jpg",
+            }
+        ]
+
+    def resolve_candidate(self, candidate_id):
+        if candidate_id != "a" * 32:
+            return None
+        return self.resolve(self.last_query or "Candidate Song")
+
+    def resolve(self, query):
+        for track in self.db.list_playlist():
+            if str(track.get("title") or "").casefold() == query.casefold():
+                return track
+        self.counter += 1
+        track_id = f"new{self.counter}"
+        self.db.insert_track(
+            {
+                "id": track_id,
+                "source": "netease",
+                "source_id": track_id,
+                "title": query,
+                "artist": "Test Artist",
+                "album": "Test Album",
+                "duration_ms": 10_000,
+                "cover_url": "https://example.invalid/cover.jpg",
+                "audio_primary": f"https://example.invalid/{track_id}.mp3",
+                "audio_alternates": [],
+                "enabled": True,
+                "created_at": now_ms(),
+            }
+        )
+        return self.db.get_track(track_id)
+
+    def refresh_audio(self, track, force=False):
+        self.db.update_track(
+            track["id"],
+            {
+                "audio_primary": f"https://example.invalid/audio/{track['id']}.mp3",
+                "audio_alternates": [],
+            },
+        )
+        return self.db.get_track(track["id"])
+
+    def ensure_lyrics(self, track):
+        return ("[00:00.00]hello", "[00:00.00]你好")
+
+
+class ApiTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        data_dir = Path(self.tmp.name)
+        self.config = Config(
+            data_dir=data_dir,
+            db_path=data_dir / "test.db",
+            static_dir=BASE_DIR / "app" / "static",
+            admin_token="secret",
+            request_cooldown_sec=0,
+            request_daily_limit=100,
+            request_pending_limit=10,
+            queue_max=2,
+            duplicate_window_sec=3600,
+            message_cooldown_sec=0,
+            message_daily_limit=100,
+            search_per_min=100,
+            min_form_ms=0,
+            ip_hash_salt="test-salt",
+            default_duration_ms=10_000,
+        )
+        self.app = build_app(self.config)
+        self.fake = FakeAggregator(self.app.db)
+        self.app.aggregator = self.fake
+        self.app.player.aggregator = self.fake
+        self.app.db.insert_track(
+            {
+                "id": "t1",
+                "source": "netease",
+                "source_id": "t1",
+                "title": "First Song",
+                "artist": "First Artist",
+                "album": "First Album",
+                "duration_ms": 10_000,
+                "cover_url": "https://example.invalid/first.jpg",
+                "audio_primary": "https://example.invalid/first.mp3",
+                "audio_alternates": [],
+                "enabled": True,
+                "created_at": 1,
+            }
+        )
+        self.server = make_server(self.app, "127.0.0.1", 0)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.thread.join(timeout=2)
+        self.server.server_close()
+        self.app.db.close()
+        self.tmp.cleanup()
+
+    def request(self, method, path, payload=None, token=None):
+        data = None
+        headers = {}
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(
+            f"{self.base}{path}", data=data, headers=headers, method=method
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                return exc.code, json.loads(exc.read().decode("utf-8"))
+            finally:
+                exc.close()
+
+    def test_now_json(self):
+        status, data = self.request("GET", "/now.json")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["track"]["title"], "First Song")
+        self.assertIn("audio", data)
+        self.assertIn("server_time_ms", data)
+
+    def test_lyrics_endpoint(self):
+        _, now = self.request("GET", "/now.json")
+        status, data = self.request("GET", f"/api/lyrics/{now['track']['id']}")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["lrc"], "[00:00.00]hello")
+        self.assertEqual(data["translation"], "[00:00.00]你好")
+
+    def test_request_and_duplicate(self):
+        payload = {
+            "query": "New Song",
+            "nickname": "Tester",
+            "message": "hello",
+            "ts": now_ms(),
+        }
+        status, data = self.request("POST", "/api/request", payload)
+        self.assertEqual(status, 201, data)
+        self.assertEqual(data["track"]["title"], "New Song")
+
+        status, data = self.request("POST", "/api/request", payload)
+        self.assertEqual(status, 409)
+        self.assertEqual(data["error"], "duplicate")
+
+    def test_honeypot(self):
+        status, data = self.request(
+            "POST",
+            "/api/request",
+            {"query": "New Song", "website": "bot", "ts": now_ms()},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "bad_request")
+
+    def test_queue_full(self):
+        for title in ("Song One", "Song Two"):
+            status, data = self.request(
+                "POST",
+                "/api/request",
+                {"query": title, "ts": now_ms()},
+            )
+            self.assertEqual(status, 201, data)
+        status, data = self.request(
+            "POST",
+            "/api/request",
+            {"query": "Song Three", "ts": now_ms()},
+        )
+        self.assertEqual(status, 429)
+        self.assertEqual(data["error"], "queue_full")
+
+    def test_admin_requires_token(self):
+        status, data = self.request("POST", "/api/admin/skip")
+        self.assertEqual(status, 401)
+        self.assertEqual(data["error"], "unauthorized")
+
+        status, data = self.request("POST", "/api/admin/skip", token="secret")
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["ok"])
+
+    def test_report_rejects_bad_event(self):
+        _, now = self.request("GET", "/now.json")
+        status, data = self.request(
+            "POST", "/api/report", {"seq": now["seq"], "event": "explode"}
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "bad_event")
+
+    def test_search_and_request_candidate(self):
+        status, data = self.request("GET", "/api/search?q=Hello")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["results"]), 1)
+        candidate = data["results"][0]
+        self.assertEqual(candidate["candidate_id"], "a" * 32)
+        self.assertEqual(candidate["source_label"], "网易云音乐")
+
+        status, data = self.request(
+            "POST",
+            "/api/request",
+            {"candidate_id": candidate["candidate_id"], "nickname": "Tester", "ts": now_ms()},
+        )
+        self.assertEqual(status, 201, data)
+        self.assertEqual(data["track"]["title"], "Hello")
+        self.assertEqual(data["queue"]["pending"], 1)
+
+    def test_expired_search_candidate(self):
+        status, data = self.request(
+            "POST",
+            "/api/request",
+            {"candidate_id": "b" * 32, "nickname": "Tester", "ts": now_ms()},
+        )
+        self.assertEqual(status, 410)
+        self.assertEqual(data["error"], "search_expired")
+
+    def test_messages_are_separate_from_requests(self):
+        status, data = self.request(
+            "POST",
+            "/api/messages",
+            {"nickname": "Tester", "body": "hello there", "ts": now_ms()},
+        )
+        self.assertEqual(status, 201, data)
+        self.assertEqual(data["message"]["body"], "hello there")
+
+        _, state = self.request("GET", "/api/state")
+        self.assertEqual(state["queue"], [])
+        self.assertEqual(state["messages"][0]["body"], "hello there")
+
+    def test_message_requires_body(self):
+        status, data = self.request("POST", "/api/messages", {"nickname": "Tester"})
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "missing_body")
+
+    def test_settings_update(self):
+        status, data = self.request(
+            "POST",
+            "/api/admin/settings",
+            {
+                "station_name": "Test FM",
+                "subtitle": "sub",
+                "page_title": "Test FM",
+                "notice": "notice",
+                "background_interval_sec": 120,
+            },
+            token="secret",
+        )
+        self.assertEqual(status, 200, data)
+        _, config = self.request("GET", "/api/config")
+        self.assertEqual(config["station_name"], "Test FM")
+        self.assertEqual(config["subtitle"], "sub")
+        self.assertEqual(config["notice"], "notice")
+        self.assertEqual(config["background_interval_sec"], 120)
+
+    def test_admin_state(self):
+        status, data = self.request("GET", "/api/admin/state", token="secret")
+        self.assertEqual(status, 200)
+        self.assertIn("now", data)
+        self.assertIn("queue", data)
+        self.assertIn("messages", data)
+        self.assertIn("settings", data)
+        self.assertIn("backgrounds", data)
+
+    def test_background_upload_and_delete(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 128
+        request = urllib.request.Request(
+            f"{self.base}/api/admin/background",
+            data=png,
+            headers={
+                "Authorization": "Bearer secret",
+                "Content-Type": "image/png",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(response.status, 201)
+        background = data["background"]
+        self.assertTrue(background["url"].startswith("/backgrounds/"))
+
+        with urllib.request.urlopen(f"{self.base}{background['url']}", timeout=10) as response:
+            self.assertEqual(response.status, 200)
+            self.assertTrue(response.read().startswith(b"\x89PNG"))
+
+        _, config = self.request("GET", "/api/config")
+        self.assertTrue(any(item["name"] == background["name"] for item in config["backgrounds"]))
+
+        status, data = self.request(
+            "POST",
+            "/api/admin/background/delete",
+            {"name": background["name"]},
+            token="secret",
+        )
+        self.assertEqual(status, 200, data)
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            urllib.request.urlopen(f"{self.base}{background['url']}", timeout=10)
+        self.assertEqual(context.exception.code, 404)
+
+    def test_static_index(self):
+        with urllib.request.urlopen(f"{self.base}/", timeout=10) as response:
+            body = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("app.js", body)
+            self.assertIn("nicknameModal", body)
+            self.assertNotIn("ON AIR", body)
+
+
+if __name__ == "__main__":
+    unittest.main()

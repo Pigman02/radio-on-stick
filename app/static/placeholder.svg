@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-label="Radio on Stick">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10182b"/>
+      <stop offset="0.55" stop-color="#0a1020"/>
+      <stop offset="1" stop-color="#16233d"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffb86b"/>
+      <stop offset="1" stop-color="#7ee7c7"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="600" rx="48" fill="url(#bg)"/>
+  <g fill="none" stroke="url(#wave)" stroke-linecap="round">
+    <path d="M120 330c42-74 84-74 126 0s84 74 126 0 84-74 126 0" stroke-width="10" opacity=".9"/>
+    <path d="M120 390c42-42 84-42 126 0s84 42 126 0 84-42 126 0" stroke-width="6" opacity=".45"/>
+    <path d="M120 270c42-42 84-42 126 0s84 42 126 0 84-42 126 0" stroke-width="6" opacity=".35"/>
+  </g>
+  <circle cx="300" cy="330" r="14" fill="#ffb86b"/>
+  <circle cx="300" cy="330" r="42" fill="none" stroke="#ffb86b" opacity=".18" stroke-width="2"/>
+  <circle cx="300" cy="330" r="78" fill="none" stroke="#ffb86b" opacity=".08" stroke-width="2"/>
+</svg>
