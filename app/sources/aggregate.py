@@ -111,10 +111,7 @@ class TrackAggregator:
         return normalized
 
     def _run_source(self, source: Any, query: str) -> list[dict[str, Any]]:
-        try:
-            return self._search_source(source, query)
-        finally:
-            self._search_slots.release()
+        return self._search_source(source, query)
 
     def _search_all(self, query: str) -> dict[str, list[dict[str, Any]]]:
         sources = list(self.search_sources)
@@ -129,7 +126,11 @@ class TrackAggregator:
                 results[name] = []
                 continue
             try:
-                futures[name] = self._executor.submit(self._run_source, source, query)
+                future = self._executor.submit(self._run_source, source, query)
+                future.add_done_callback(
+                    lambda _future: self._search_slots.release()
+                )
+                futures[name] = future
             except Exception:
                 self._search_slots.release()
                 raise
