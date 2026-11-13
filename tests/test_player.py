@@ -82,7 +82,7 @@ class PlayerTests(unittest.TestCase):
 
         slow = SlowAggregator(self.db)
         player = Player(self.db, slow, self.config, clock=self.clock)
-        thread = threading.Thread(target=player.ensure_started, daemon=True)
+        thread = threading.Thread(target=lambda: player.advance("test"), daemon=True)
         thread.start()
         time.sleep(0.1)
 
@@ -94,7 +94,7 @@ class PlayerTests(unittest.TestCase):
         thread.join(timeout=2)
 
     def test_start_and_position(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         snapshot = self.player.snapshot()
         self.assertEqual(snapshot["track"]["id"], "t1")
         self.assertEqual(snapshot["position_ms"], 0)
@@ -105,14 +105,14 @@ class PlayerTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["position_ms"], 5000, delta=20)
 
     def test_initial_refresh_bumps_audio_rev(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         snapshot = self.player.snapshot(ensure=False)
         self.assertEqual(snapshot["audio"]["direct"], "http://audio/t1")
         self.assertEqual(snapshot["audio_rev"], 1)
 
     def test_queued_playlist_track_is_not_repeated(self):
         seed_track(self.db, "t3", "Third", 10_000, 3)
-        self.player.ensure_started()
+        self.player.advance("test")
         self.assertEqual(self.player.snapshot()["track"]["id"], "t1")
 
         self.db.enqueue("t3", "key", "nick", None)
@@ -125,7 +125,7 @@ class PlayerTests(unittest.TestCase):
         self.assertIsNone(self.player.snapshot()["track"])
 
     def test_advance_at_end(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         first_seq = self.player.snapshot()["seq"]
         self.clock.advance(11)
         snapshot = self.player.snapshot()
@@ -134,7 +134,7 @@ class PlayerTests(unittest.TestCase):
         self.assertEqual(snapshot["position_ms"], 0)
 
     def test_pause_resume(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         self.clock.advance(5)
         self.player.pause()
         self.clock.advance(100)
@@ -149,7 +149,7 @@ class PlayerTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["position_ms"], 7000, delta=20)
 
     def test_queue_takes_priority(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         self.assertEqual(self.player.snapshot()["track"]["id"], "t1")
         self.db.enqueue("t2", "key", "nick", "message")
         self.player.skip("test")
@@ -162,7 +162,7 @@ class PlayerTests(unittest.TestCase):
         self.assertIsNone(snapshot["track"])
 
     def test_playlist_does_not_loop(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         self.clock.advance(11)
         self.assertEqual(self.player.snapshot()["track"]["id"], "t2")
         self.clock.advance(21)
@@ -176,7 +176,7 @@ class PlayerTests(unittest.TestCase):
         self.assertEqual(restarted["track"]["id"], "t3")
 
     def test_restart_recovers_state(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         self.clock.advance(5)
         before = self.player.snapshot()
 
@@ -187,15 +187,39 @@ class PlayerTests(unittest.TestCase):
         self.assertAlmostEqual(after["position_ms"], before["position_ms"], delta=20)
 
     def test_client_ended_advances(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         seq = self.player.snapshot()["seq"]
         self.clock.advance(6)
         snapshot = self.player.report(seq, "ended")
         self.assertEqual(snapshot["seq"], seq + 1)
         self.assertEqual(snapshot["track"]["id"], "t2")
 
+    def test_skip_async_reports_busy_instead_of_silent_success(self):
+        self.player.advance("test")
+        seq = self.player.snapshot()["seq"]
+        self.player._advance_lock.acquire()
+        try:
+            self.assertFalse(self.player.skip_async("test"))
+        finally:
+            self.player._advance_lock.release()
+        self.assertEqual(self.player.snapshot()["seq"], seq)
+
+    def test_estimated_track_ended_has_minimum_play_time(self):
+        self.db.update_track("t1", {"duration_estimated": True})
+        self.player.advance("test")
+        seq = self.player.snapshot()["seq"]
+        self.clock.advance(6)
+        snapshot = self.player.report(seq, "ended")
+        self.assertEqual(snapshot["seq"], seq)
+        self.assertEqual(snapshot["track"]["id"], "t1")
+
+        self.clock.advance(55)
+        snapshot = self.player.report(seq, "ended")
+        self.assertEqual(snapshot["seq"], seq + 1)
+        self.assertEqual(snapshot["track"]["id"], "t2")
+
     def test_stale_state_jumps_to_fresh_track(self):
-        self.player.ensure_started()
+        self.player.advance("test")
         self.clock.advance(100)
         snapshot = self.player.snapshot()
         self.assertIn(snapshot["track"]["id"], {"t1", "t2"})

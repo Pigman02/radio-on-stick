@@ -116,6 +116,11 @@ class VoteTracker:
             self._switched_seq = seq
             return True
 
+    def release_switch(self, seq: int) -> None:
+        with self._lock:
+            if self._switched_seq == seq:
+                self._switched_seq = -1
+
     def reset(self, seq: int) -> None:
         with self._lock:
             self._seq = seq

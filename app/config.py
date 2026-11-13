@@ -60,6 +60,7 @@ class Config:
     lyrics_per_min: int = 30
     lyrics_retry_sec: int = 600
     pin_per_min: int = 10
+    estimated_ended_min_sec: int = 60
     search_limit: int = 5
     search_results_limit: int = 12
     search_cache_ttl_sec: int = 900
@@ -114,6 +115,9 @@ class Config:
             lyrics_per_min=_int(source, "RADIO_LYRICS_PER_MIN", 30),
             lyrics_retry_sec=_int(source, "RADIO_LYRICS_RETRY", 600),
             pin_per_min=_int(source, "RADIO_PIN_PER_MIN", 10),
+            estimated_ended_min_sec=_int(
+                source, "RADIO_ESTIMATED_ENDED_MIN", 60
+            ),
             banned_words=_csv(source, "RADIO_BANNED_WORDS", ()),
             default_duration_ms=_int(source, "RADIO_DEFAULT_DURATION_MS", 240_000),
             poll_interval_sec=_float(source, "RADIO_POLL_INTERVAL", 0.5),
