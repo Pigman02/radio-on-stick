@@ -6,6 +6,8 @@ import json
 import logging
 import mimetypes
 import re
+import shutil
+import threading
 import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -85,15 +87,37 @@ def _image_extension(data: bytes) -> str | None:
 class RadioServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    max_workers = 32
 
     def __init__(self, server_address: tuple[str, int], app: RadioApp) -> None:
         self.app = app
+        self._workers = threading.BoundedSemaphore(self.max_workers)
         super().__init__(server_address, RadioHandler)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._workers.acquire(blocking=False):
+            try:
+                request.close()
+            except OSError:
+                pass
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._workers.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._workers.release()
 
 
 class RadioHandler(BaseHTTPRequestHandler):
     server_version = "Radio/0.2"
     protocol_version = "HTTP/1.1"
+    timeout = 15
 
     @property
     def app(self) -> RadioApp:
@@ -139,7 +163,8 @@ class RadioHandler(BaseHTTPRequestHandler):
 
     def _send_file(self, path: Path, *, cache_sec: int = 0) -> None:
         try:
-            body = path.read_bytes()
+            size = path.stat().st_size
+            handle = path.open("rb")
         except OSError:
             self._send_error_json(404, "not_found", "文件不存在")
             return
@@ -148,19 +173,26 @@ class RadioHandler(BaseHTTPRequestHandler):
             content_type = "application/javascript; charset=utf-8"
         elif path.suffix in {".css", ".svg", ".html"}:
             content_type = f"{content_type}; charset=utf-8"
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header(
-            "Cache-Control",
-            f"public, max-age={cache_sec}" if cache_sec else "no-cache",
-        )
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("X-Frame-Options", "SAMEORIGIN")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(size))
+            self.send_header(
+                "Cache-Control",
+                f"public, max-age={cache_sec}" if cache_sec else "no-cache",
+            )
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            with handle:
+                shutil.copyfileobj(handle, self.wfile, length=64 * 1024)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        finally:
+            if not handle.closed:
+                handle.close()
 
     def _static_path(self, url_path: str) -> Path | None:
         relative = url_path.lstrip("/") or "index.html"
@@ -343,8 +375,7 @@ class RadioHandler(BaseHTTPRequestHandler):
             self._send_json(200, self._public_config())
             return
         if path == "/api/state":
-            voter = self._query_listener(parsed.query)
-            now = self._decorate_snapshot(self.app.player.snapshot(), voter)
+            now = self._decorate_snapshot(self.app.player.snapshot(), None)
             self._send_json(
                 200,
                 {
@@ -367,6 +398,14 @@ class RadioHandler(BaseHTTPRequestHandler):
             track = self.app.db.get_track(track_id)
             if track is None:
                 raise ApiError(404, "not_found", "曲目不存在")
+            decision = self.app.limiter.consume_lyrics(self._ip_key())
+            if not decision.allowed:
+                raise ApiError(
+                    429,
+                    decision.reason,
+                    "歌词请求过于频繁，请稍后再试",
+                    retry_after=decision.retry_after,
+                )
             lrc, translation = self.app.aggregator.ensure_lyrics(track)
             self._send_json(
                 200,
@@ -531,6 +570,15 @@ class RadioHandler(BaseHTTPRequestHandler):
         if self.app.db.count_pending() >= self.app.config.queue_max:
             raise ApiError(429, "queue_full", "点歌队列已满，请稍后再试", retry_after=30)
 
+        resolve_decision = self.app.limiter.consume_search(ip_key)
+        if not resolve_decision.allowed:
+            raise ApiError(
+                429,
+                resolve_decision.reason,
+                "点歌请求过于频繁，请稍后再试",
+                retry_after=resolve_decision.retry_after,
+            )
+
         if candidate_id:
             track = self.app.aggregator.resolve_candidate(candidate_id)
             if track is None:
@@ -580,7 +628,11 @@ class RadioHandler(BaseHTTPRequestHandler):
         listeners = self.app.listeners.count()
         result = self.app.votes.vote(seq, voter, listeners)
         switched = False
-        if result["added"] and result["passed"]:
+        if (
+            result["added"]
+            and result["passed"]
+            and self.app.votes.claim_switch(seq)
+        ):
             self.app.player.skip("vote")
             now = self.app.player.snapshot()
             self.app.votes.reset(int(now.get("seq") or 0))
@@ -597,6 +649,14 @@ class RadioHandler(BaseHTTPRequestHandler):
         )
 
     def _handle_queue_pin(self) -> None:
+        decision = self.app.limiter.consume_pin(self._ip_key())
+        if not decision.allowed:
+            raise ApiError(
+                429,
+                decision.reason,
+                "置顶操作过于频繁，请稍后再试",
+                retry_after=decision.retry_after,
+            )
         data = self._read_json()
         try:
             queue_id = int(data.get("queue_id"))
@@ -670,8 +730,23 @@ class RadioHandler(BaseHTTPRequestHandler):
                 raise ApiError(400, "missing_query", "请输入歌名或选择搜索结果")
             if track is None:
                 raise ApiError(404, "not_found", "没有找到这首歌")
+            playlist_ids = {
+                item["id"] for item in self.app.db.list_playlist_summaries()
+            }
+            was_enabled = bool(track.get("enabled"))
             self.app.db.update_track(track["id"], {"enabled": True})
-            self._send_json(201, {"ok": True, "track": _summary(track)})
+            queued = None
+            current = self.app.player.snapshot(ensure=False).get("track")
+            is_current = bool(current and current.get("id") == track["id"])
+            if not is_current and (
+                track["id"] in playlist_ids or not was_enabled
+            ):
+                queued = self.app.db.enqueue(
+                    track["id"], "admin", "admin", None
+                )
+            self._send_json(
+                201, {"ok": True, "track": _summary(track), "queued": queued}
+            )
             return
         if path == "/api/admin/clear-queue":
             cleared = self.app.db.clear_pending()

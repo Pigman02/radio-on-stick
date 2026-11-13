@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import urllib.parse
 from typing import Any, Callable
 
 from .config import Config
@@ -11,6 +12,17 @@ from .sources.aggregate import TrackAggregator
 
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_url(url: Any) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    parts = urllib.parse.urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return ""
+    return value
+
 
 K_TRACK = "player.current_track_id"
 K_STARTED = "player.started_at_ms"
@@ -36,6 +48,10 @@ class Player:
         self.config = config
         self.clock = clock or time.time
         self._lock = threading.RLock()
+        self._advance_lock = threading.Lock()
+        self._refresh_lock = threading.Lock()
+        self._refresh_stats: dict[int, tuple[int, int]] = {}
+        self._started_refresh: set[int] = set()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._load_state()
@@ -89,6 +105,7 @@ class Player:
             self.db.end_play(self._play_id, now)
         if self._queue_id:
             self.db.set_queue_status(self._queue_id, "played", ended_at=now)
+            self.db.delete_queue_item(self._queue_id)
         self._play_id = 0
         self._queue_id = 0
 
@@ -98,7 +115,7 @@ class Player:
             track = self.db.get_track(queued["track_id"])
             if track is not None:
                 return track, int(queued["id"])
-        playlist = self.db.list_playlist()
+        playlist = self.db.list_playlist_summaries()
         if not playlist:
             return None, 0
         index = self._rotation_index
@@ -110,16 +127,18 @@ class Player:
             self._rotation_index = index
             return None, 0
         self._rotation_index = index + 1
-        return playlist[index], 0
+        chosen = playlist[index]
+        track = self.db.get_track(str(chosen["id"]))
+        return track, 0
 
-    def advance(self, reason: str = "auto") -> dict[str, Any] | None:
+    def _advance_state(self, reason: str) -> tuple[dict[str, Any] | None, int]:
         with self._lock:
             now = self._now_ms()
             self._finish_current(now)
             track, queue_id = self._pick_next()
             if track is None:
                 if not self._track_id:
-                    return None
+                    return None, self._seq
                 self._track_id = ""
                 self._started_at = 0
                 self._paused = False
@@ -128,14 +147,10 @@ class Player:
                 self._seq += 1
                 self._save_state()
                 logger.info("player idle (%s)", reason)
-                return None
+                return None, self._seq
 
             if queue_id:
                 self.db.set_queue_status(queue_id, "playing", started_at=now)
-            try:
-                track = self.aggregator.refresh_audio(track)
-            except Exception as exc:
-                logger.warning("audio refresh failed for %s: %s", track.get("title"), exc)
 
             self._track_id = str(track["id"])
             self._started_at = now
@@ -144,9 +159,32 @@ class Player:
             self._queue_id = queue_id
             self._audio_rev = 0
             self._seq += 1
+            self._started_refresh.clear()
+            if len(self._refresh_stats) > 50:
+                self._refresh_stats.clear()
             self._play_id = self.db.start_play(self._track_id, queue_id or None, now)
             self._save_state()
             logger.info("now playing: %s - %s (%s)", track.get("artist"), track.get("title"), reason)
+            return track, self._seq
+
+    def _resolve_track_audio(self, track: dict[str, Any], seq: int) -> None:
+        with self._refresh_lock:
+            with self._lock:
+                if seq != self._seq:
+                    return
+                if seq in self._started_refresh:
+                    return
+                self._started_refresh.add(seq)
+            try:
+                self.aggregator.refresh_audio(track)
+            except Exception as exc:
+                logger.warning("audio refresh failed for %s: %s", track.get("title"), exc)
+
+    def advance(self, reason: str = "auto") -> dict[str, Any] | None:
+        with self._advance_lock:
+            track, seq = self._advance_state(reason)
+            if track is not None:
+                self._resolve_track_audio(track, seq)
             return track
 
     def _current_track(self) -> dict[str, Any] | None:
@@ -154,23 +192,59 @@ class Player:
             return None
         return self.db.get_track(self._track_id)
 
-    def ensure_started(self) -> None:
+    def _start_reason(self) -> str:
         with self._lock:
             if self._paused:
-                return
+                return ""
             track = self._current_track()
             if track is None or self._started_at <= 0:
-                if not self.db.list_playlist() and self.db.next_pending() is None:
-                    return
-                self.advance("start")
-                return
+                if not self.db.list_playlist_summaries() and self.db.next_pending() is None:
+                    return ""
+                return "start"
             now = self._now_ms()
             duration = self._duration(track, self.config.default_duration_ms)
             elapsed = now - self._started_at
             if elapsed >= duration:
                 if elapsed > duration * 2:
                     logger.info("player state stale, advancing to a fresh track")
-                self.advance("ended")
+                return "ended"
+            return ""
+
+    def ensure_started(self) -> None:
+        if self._paused:
+            return
+        if not self._advance_lock.acquire(blocking=False):
+            return
+        try:
+            reason = self._start_reason()
+            if not reason:
+                return
+            track, seq = self._advance_state(reason)
+            if track is not None:
+                self._resolve_track_audio(track, seq)
+        finally:
+            self._advance_lock.release()
+
+    def _ensure_state_only(self) -> None:
+        """Advance state without blocking the caller on upstream network I/O."""
+        if self._paused:
+            return
+        if not self._advance_lock.acquire(blocking=False):
+            return
+        try:
+            reason = self._start_reason()
+            if not reason:
+                return
+            track, seq = self._advance_state(reason)
+            if track is not None:
+                threading.Thread(
+                    target=self._resolve_track_audio,
+                    args=(track, seq),
+                    name="radio-resolve",
+                    daemon=True,
+                ).start()
+        finally:
+            self._advance_lock.release()
 
     def tick(self) -> None:
         try:
@@ -211,7 +285,7 @@ class Player:
             track = self.db.get_track(queued["track_id"])
             if track is not None:
                 return track
-        playlist = self.db.list_playlist()
+        playlist = self.db.list_playlist_summaries()
         if not playlist:
             return None
         index = self._rotation_index
@@ -233,8 +307,54 @@ class Player:
             "album": track.get("album"),
             "duration_ms": track.get("duration_ms"),
             "duration_estimated": bool(track.get("duration_estimated")),
-            "cover_url": track.get("cover_url") or "",
+            "cover_url": _safe_url(track.get("cover_url")),
         }
+
+    def _advance_state_async(self, reason: str) -> None:
+        if not self._advance_lock.acquire(blocking=False):
+            return
+        try:
+            track, seq = self._advance_state(reason)
+            if track is not None:
+                threading.Thread(
+                    target=self._resolve_track_audio,
+                    args=(track, seq),
+                    name="radio-resolve",
+                    daemon=True,
+                ).start()
+        finally:
+            self._advance_lock.release()
+
+    def _refresh_audio(self, track: dict[str, Any], seq: int) -> None:
+        with self._refresh_lock:
+            now = self._now_ms()
+            with self._lock:
+                if seq != self._seq:
+                    return
+                count, since = self._refresh_stats.get(seq, (0, now))
+                if now - since > 60_000:
+                    count, since = 0, now
+                if count >= 3:
+                    return
+                self._refresh_stats[seq] = (count + 1, since)
+                old_primary = track.get("audio_primary") or ""
+                old_alternates = list(track.get("audio_alternates") or [])
+            try:
+                updated = self.aggregator.refresh_audio(track, force=True)
+            except Exception as exc:
+                logger.warning("re-resolve failed: %s", exc)
+                return
+            changed = (
+                (updated.get("audio_primary") or "") != old_primary
+                or list(updated.get("audio_alternates") or []) != old_alternates
+            )
+            if not changed:
+                return
+            with self._lock:
+                if seq != self._seq:
+                    return
+                self._audio_rev += 1
+                self._save_state()
 
     def report(self, seq: int, event: str) -> dict[str, Any]:
         with self._lock:
@@ -242,6 +362,7 @@ class Player:
                 return self.snapshot(ensure=False)
             if event == "ended":
                 track = self._current_track()
+                should_advance = False
                 if track is not None:
                     now = self._now_ms()
                     position = (
@@ -250,22 +371,20 @@ class Player:
                         else max(0, now - self._started_at)
                     )
                     duration = self._duration(track, self.config.default_duration_ms)
-                    if position >= min(30_000, int(duration * 0.5)):
-                        self.advance("client-ended")
-            elif event in {"error", "stalled"}:
-                track = self._current_track()
-                if track is not None:
-                    try:
-                        self.aggregator.refresh_audio(track, force=True)
-                    except Exception as exc:
-                        logger.warning("re-resolve failed: %s", exc)
-                    self._audio_rev += 1
-                    self._save_state()
-            return self.snapshot(ensure=False)
+                    should_advance = position >= min(30_000, int(duration * 0.5))
+            else:
+                should_advance = False
+                track = self._current_track() if event in {"error", "stalled"} else None
+
+        if event == "ended" and should_advance:
+            self._advance_state_async("client-ended")
+        elif event in {"error", "stalled"} and track is not None:
+            self._refresh_audio(track, seq)
+        return self.snapshot(ensure=False)
 
     def upcoming(self, limit: int = 40) -> list[dict[str, Any]]:
+        self._ensure_state_only()
         with self._lock:
-            self.ensure_started()
             limit = max(1, int(limit))
             current = self._current_track()
             current_id = str(current["id"]) if current else ""
@@ -325,7 +444,7 @@ class Player:
                 if len(items) >= limit:
                     return items
 
-            playlist = self.db.list_playlist()
+            playlist = self.db.list_playlist_summaries()
             index = self._rotation_index
             while index < len(playlist) and len(items) < limit:
                 track = playlist[index]
@@ -345,9 +464,9 @@ class Player:
             return items
 
     def snapshot(self, ensure: bool = True) -> dict[str, Any]:
+        if ensure:
+            self._ensure_state_only()
         with self._lock:
-            if ensure:
-                self.ensure_started()
             now = self._now_ms()
             base = {
                 "server_time_ms": now,
@@ -385,8 +504,12 @@ class Player:
                     "position_ms": position,
                     "duration_ms": duration,
                     "audio": {
-                        "direct": track.get("audio_primary") or "",
-                        "alternates": list(track.get("audio_alternates") or []),
+                        "direct": _safe_url(track.get("audio_primary")),
+                        "alternates": [
+                            url
+                            for url in (track.get("audio_alternates") or [])
+                            if _safe_url(url)
+                        ],
                     },
                     "lyrics_url": f"/api/lyrics/{track['id']}",
                     "next": self._track_summary(next_track) if next_track else None,

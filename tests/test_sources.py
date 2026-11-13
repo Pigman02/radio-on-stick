@@ -172,10 +172,10 @@ class FakeQQ:
 
 class FakeMeting:
     def audio_url(self, song_id):
-        return f"meting-audio:{song_id}"
+        return f"https://meting.invalid/audio/{song_id}"
 
     def cover_url(self, pic_id):
-        return f"meting-cover:{pic_id}"
+        return f"https://meting.invalid/cover/{pic_id}"
 
     def lyrics(self, song_id):
         return "[00:00.00]meting fallback"
@@ -229,8 +229,12 @@ class AggregatorTests(unittest.TestCase):
         self.assertEqual(track["album"], "To Kill a Living Book -for Library Of Ruina-")
         self.assertEqual(track["duration_ms"], 240092)
         self.assertFalse(track["duration_estimated"])
-        self.assertEqual(track["cover_url"], "meting-cover:109951166524388678")
-        self.assertEqual(track["audio_primary"], "meting-audio:1887467088")
+        self.assertEqual(
+            track["cover_url"], "https://meting.invalid/cover/109951166524388678"
+        )
+        self.assertEqual(
+            track["audio_primary"], "https://meting.invalid/audio/1887467088"
+        )
         self.assertTrue(any("aqqmusic" in url for url in track["audio_alternates"]))
         self.assertIn("Frozen stairs", track["lyrics_lrc"])
         self.assertIn("冻结的阶梯", track["lyrics_translation"])
@@ -254,7 +258,9 @@ class AggregatorTests(unittest.TestCase):
     def test_refresh_audio_updates_alternate(self):
         track = self.aggregator.resolve("Iron Lotus Mili")
         refreshed = self.aggregator.refresh_audio(track, force=True)
-        self.assertEqual(refreshed["audio_primary"], "meting-audio:1887467088")
+        self.assertEqual(
+            refreshed["audio_primary"], "https://meting.invalid/audio/1887467088"
+        )
         self.assertTrue(any("fresh=1" in url for url in refreshed["audio_alternates"]))
 
     def test_no_match(self):

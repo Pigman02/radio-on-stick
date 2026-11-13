@@ -14,6 +14,8 @@ ACT_REQUEST = "request"
 ACT_REPORT = "report"
 ACT_SEARCH = "search"
 ACT_MESSAGE = "message"
+ACT_LYRICS = "lyrics"
+ACT_PIN = "pin"
 DAY_MS = 86_400_000
 
 
@@ -104,6 +106,30 @@ class RateLimiter:
                 remaining = window - (now - events[0])
                 return RateDecision(False, "search_limit", max(1, remaining // 1000))
             self.db.add_rate_event(key, ACT_SEARCH, now)
+            self._cleanup(now)
+            return RateDecision(True)
+
+    def consume_lyrics(self, key: str, now: int | None = None) -> RateDecision:
+        now = self._now_ms() if now is None else int(now)
+        window = 60_000
+        with self._lock:
+            events = self.db.rate_events_since(key, ACT_LYRICS, now - window)
+            if len(events) >= max(1, self.config.lyrics_per_min):
+                remaining = window - (now - events[0])
+                return RateDecision(False, "lyrics_limit", max(1, remaining // 1000))
+            self.db.add_rate_event(key, ACT_LYRICS, now)
+            self._cleanup(now)
+            return RateDecision(True)
+
+    def consume_pin(self, key: str, now: int | None = None) -> RateDecision:
+        now = self._now_ms() if now is None else int(now)
+        window = 60_000
+        with self._lock:
+            events = self.db.rate_events_since(key, ACT_PIN, now - window)
+            if len(events) >= max(1, self.config.pin_per_min):
+                remaining = window - (now - events[0])
+                return RateDecision(False, "pin_limit", max(1, remaining // 1000))
+            self.db.add_rate_event(key, ACT_PIN, now)
             self._cleanup(now)
             return RateDecision(True)
 

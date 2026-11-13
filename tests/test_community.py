@@ -45,6 +45,12 @@ class VoteTrackerTests(unittest.TestCase):
         self.assertTrue(second["passed"])
         self.assertEqual(second["votes"], 2)
 
+    def test_switch_can_only_be_claimed_once(self):
+        votes = VoteTracker()
+        self.assertTrue(votes.claim_switch(1))
+        self.assertFalse(votes.claim_switch(1))
+        self.assertTrue(votes.claim_switch(2))
+
     def test_resets_on_new_sequence(self):
         votes = VoteTracker()
         votes.vote(1, "v:a", 1)

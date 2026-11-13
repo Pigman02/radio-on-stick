@@ -167,9 +167,13 @@ class Database:
 
     def _execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
         with self._lock:
-            cur = self._conn.execute(sql, tuple(params))
-            self._conn.commit()
-            return cur
+            try:
+                cur = self._conn.execute(sql, tuple(params))
+                self._conn.commit()
+                return cur
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def _fetchall(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -192,13 +196,17 @@ class Database:
 
     def set_settings(self, values: dict[str, Any]) -> None:
         with self._lock:
-            for key, value in values.items():
-                self._conn.execute(
-                    "INSERT INTO settings(key, value) VALUES(?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (key, str(value)),
-                )
-            self._conn.commit()
+            try:
+                for key, value in values.items():
+                    self._conn.execute(
+                        "INSERT INTO settings(key, value) VALUES(?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (key, str(value)),
+                    )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     @staticmethod
     def _track_to_row(track: dict[str, Any]) -> dict[str, Any]:
@@ -283,6 +291,15 @@ class Database:
         )
         return [track for row in rows if (track := self._row_to_track(row)) is not None]
 
+    def list_playlist_summaries(self) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            "SELECT id, source, title, artist, album, duration_ms, "
+            "duration_estimated, cover_url, audio_primary, audio_alternates, "
+            "enabled, created_at "
+            "FROM tracks WHERE enabled = 1 ORDER BY created_at, id"
+        )
+        return [track for row in rows if (track := self._row_to_track(row)) is not None]
+
     def delete_track(self, track_id: str) -> None:
         self._execute("DELETE FROM tracks WHERE id = ?", (track_id,))
 
@@ -364,20 +381,56 @@ class Database:
         return [dict(row) for row in rows]
 
     def clear_pending(self) -> int:
-        cur = self._execute("UPDATE queue SET status = 'rejected' WHERE status = 'pending'")
-        return int(cur.rowcount or 0)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM queue WHERE status = 'pending'"
+            ).fetchall()
+            for row in rows:
+                self._conn.execute(
+                    "DELETE FROM queue_pins WHERE queue_id = ?", (int(row["id"]),)
+                )
+            cur = self._conn.execute("DELETE FROM queue WHERE status = 'pending'")
+            self._conn.commit()
+            return int(cur.rowcount or 0)
+
+    def cleanup_old_data(self, retention_days: int = 90, now: int | None = None) -> None:
+        cutoff = int(now if now is not None else now_ms()) - retention_days * 86_400_000
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "DELETE FROM plays WHERE started_at < ?", (cutoff,)
+                )
+                self._conn.execute(
+                    "DELETE FROM messages WHERE created_at < ?", (cutoff,)
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def delete_queue_item(self, queue_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM queue_pins WHERE queue_id = ?", (int(queue_id),)
+            )
+            self._conn.execute("DELETE FROM queue WHERE id = ?", (int(queue_id),))
+            self._conn.commit()
 
     def cleanup_history(self) -> int:
         with self._lock:
-            self._conn.execute(
-                "DELETE FROM queue_pins WHERE queue_id IN "
-                "(SELECT id FROM queue WHERE status IN ('played', 'rejected'))"
-            )
-            cur = self._conn.execute(
-                "DELETE FROM queue WHERE status IN ('played', 'rejected')"
-            )
-            self._conn.commit()
-            return int(cur.rowcount or 0)
+            try:
+                self._conn.execute(
+                    "DELETE FROM queue_pins WHERE queue_id IN "
+                    "(SELECT id FROM queue WHERE status IN ('played', 'rejected'))"
+                )
+                cur = self._conn.execute(
+                    "DELETE FROM queue WHERE status IN ('played', 'rejected')"
+                )
+                self._conn.commit()
+                return int(cur.rowcount or 0)
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def pin_queue(
         self, queue_id: int, voter_key: str, created_at: int | None = None

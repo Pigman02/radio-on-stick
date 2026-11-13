@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import logging
 import re
+import sqlite3
 import threading
 import time
 import unicodedata
@@ -39,6 +40,16 @@ def _url_key(url: str) -> str:
     return f"{parts.netloc}{parts.path}"
 
 
+def _safe_url(url: Any) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    parts = urllib.parse.urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return ""
+    return value
+
+
 class TrackAggregator:
     def __init__(
         self,
@@ -56,6 +67,10 @@ class TrackAggregator:
         self.search_sources = [netease, qq]
         self._candidate_lock = threading.Lock()
         self._candidates: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._executor = ThreadPoolExecutor(
+            max_workers=max(2, len(self.search_sources) + 1),
+            thread_name_prefix="radio-search",
+        )
 
     def register_source(self, source: Any) -> None:
         if source not in self.search_sources:
@@ -88,17 +103,21 @@ class TrackAggregator:
         if not sources:
             return {}
         results: dict[str, list[dict[str, Any]]] = {}
-        with ThreadPoolExecutor(max_workers=max(1, len(sources))) as pool:
-            futures = {
-                self._source_name(source): pool.submit(self._search_source, source, query)
-                for source in sources
-            }
-            for name, future in futures.items():
-                try:
-                    results[name] = future.result(timeout=self.config.upstream_timeout * 2)
-                except Exception as exc:
-                    logger.warning("%s search timeout: %s", name, exc)
-                    results[name] = []
+        futures = {
+            self._source_name(source): self._executor.submit(
+                self._search_source, source, query
+            )
+            for source in sources
+        }
+        deadline = time.monotonic() + max(1.0, self.config.upstream_timeout + 1.0)
+        for name, future in futures.items():
+            remaining = max(0.05, deadline - time.monotonic())
+            try:
+                results[name] = future.result(timeout=remaining)
+            except Exception as exc:
+                future.cancel()
+                logger.warning("%s search timeout: %s", name, exc)
+                results[name] = []
         return results
 
     def _score_query(self, query: str, item: dict[str, Any]) -> float:
@@ -364,6 +383,10 @@ class TrackAggregator:
             seen_urls.add(key)
             alternates.append(candidate)
 
+        primary = _safe_url(primary)
+        alternates = [url for url in alternates if _safe_url(url) and url != primary]
+        cover_url = _safe_url(cover_url)
+
         if duration_ms is None:
             duration_ms = self.config.default_duration_ms
             duration_estimated = True
@@ -424,7 +447,13 @@ class TrackAggregator:
                 self.db.update_track(existing["id"], updates)
             return self.db.get_track(existing["id"])
 
-        track_id = self.db.insert_track(track)
+        try:
+            track_id = self.db.insert_track(track)
+        except sqlite3.IntegrityError:
+            existing = self.db.find_track_by_ids(netease_id, qq_id)
+            if existing is None and source_id:
+                existing = self.db.find_track_by_source(source, source_id)
+            return existing
         return self.db.get_track(track_id)
 
     def _qq_track_url(self, track: dict[str, Any]) -> str | None:
@@ -442,6 +471,11 @@ class TrackAggregator:
         existing_translation = str(track.get("lyrics_translation") or "").strip()
         if existing_lrc:
             return existing_lrc, existing_translation
+
+        fetched_at = int(track.get("lyrics_fetched_at") or 0)
+        now = now_ms()
+        if fetched_at and now - fetched_at < max(60, self.config.lyrics_retry_sec) * 1000:
+            return "", existing_translation
 
         lrc = ""
         translation = ""
@@ -462,12 +496,16 @@ class TrackAggregator:
                 {
                     "lyrics_lrc": lrc,
                     "lyrics_translation": translation,
-                    "lyrics_fetched_at": now_ms(),
+                    "lyrics_fetched_at": now,
                 },
             )
             track["lyrics_lrc"] = lrc
             track["lyrics_translation"] = translation
-            track["lyrics_fetched_at"] = now_ms()
+            track["lyrics_fetched_at"] = now
+        else:
+            # Negative cache: avoid hammering upstream when no lyrics exist.
+            self.db.update_track(track["id"], {"lyrics_fetched_at": now})
+            track["lyrics_fetched_at"] = now
         return lrc, translation
 
     def refresh_audio(self, track: dict[str, Any], force: bool = False) -> dict[str, Any]:
@@ -499,6 +537,8 @@ class TrackAggregator:
             seen_urls.add(key)
             alternates.append(candidate)
 
+        primary = _safe_url(primary)
+        alternates = [url for url in alternates if _safe_url(url) and url != primary]
         updates: dict[str, Any] = {
             "audio_primary": primary,
             "audio_alternates": alternates,

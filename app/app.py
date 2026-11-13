@@ -39,6 +39,7 @@ def build_app(
     config.ensure_dirs()
     db = Database(config.db_path)
     db.cleanup_history()
+    db.cleanup_old_data()
     http = http or HttpClient(
         timeout=config.upstream_timeout,
         retries=config.upstream_retries,

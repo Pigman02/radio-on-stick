@@ -490,7 +490,30 @@ function seekToLive() {
   }
 }
 
+function audioKeyForCurrent() {
+  return `${state.seq}:${state.audioRev}:${state.sourceIndex}`;
+}
+
+function ensureSourceLoaded(now = state.now) {
+  if (!state.sources.length) return false;
+  if (!audio.src || state.audioKey !== audioKeyForCurrent()) {
+    loadSource(currentPosition(now));
+    return true;
+  }
+  return false;
+}
+
+function unloadAudio() {
+  if (audio.src) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }
+  state.audioKey = null;
+}
+
 function tryNextSource(reason) {
+  if (!state.userWantsPlay) return;
   if (state.sourceIndex + 1 < state.sources.length) {
     state.sourceIndex += 1;
     state.audioState = "buffering";
@@ -563,28 +586,31 @@ function applyNow(now) {
     state.lastPositionSec = -1;
     clearStalledTimer();
     loadLyrics(now.lyrics_url, now.track.id);
-    if (sources.length) {
+    if (state.userWantsPlay && sources.length) {
       loadSource(currentPosition(now));
     } else {
-      state.audioState = "error";
+      unloadAudio();
+      state.audioState = sources.length ? "idle" : "error";
+      updateAudioMode();
     }
   } else if (isNewAudio) {
     state.sources = sources;
     state.sourceIndex = 0;
     clearStalledTimer();
-    if (sources.length) {
+    if (state.userWantsPlay && sources.length) {
       loadSource(currentPosition(now));
     } else {
-      state.audioState = "error";
+      unloadAudio();
+      state.audioState = sources.length ? "idle" : "error";
+      updateAudioMode();
     }
-  } else if (!audio.src && sources.length) {
-    state.sources = sources;
-    loadSource(now.position_ms);
   }
 
   if (state.serverPaused) {
     audio.pause();
     clearStalledTimer();
+  } else if (state.userWantsPlay && !audio.src) {
+    ensureSourceLoaded(now);
   } else if (state.userWantsPlay && audio.paused) {
     seekToLive();
     attemptPlay();
@@ -1206,7 +1232,16 @@ playBtn.addEventListener("click", () => {
     updatePlayButton();
     return;
   }
+  if (!state.sources.length) {
+    state.audioState = "error";
+    refreshStatus();
+    return;
+  }
   state.userWantsPlay = true;
+  if (ensureSourceLoaded()) {
+    updatePlayButton();
+    return;
+  }
   seekToLive();
   attemptPlay();
   updatePlayButton();
@@ -1290,7 +1325,7 @@ audio.addEventListener("stalled", () => {
 audio.addEventListener("pause", updatePlayButton);
 audio.addEventListener("play", updatePlayButton);
 audio.addEventListener("error", () => {
-  if (audio.src) tryNextSource("error");
+  if (state.userWantsPlay && audio.src) tryNextSource("error");
 });
 audio.addEventListener("ended", () => {
   clearStalledTimer();
