@@ -62,6 +62,7 @@ class Config:
     search_cache_ttl_sec: int = 900
     background_interval_sec: int = 300
     background_max_bytes: int = 8 * 1024 * 1024
+    listener_ttl_sec: int = 30
     banned_words: tuple[str, ...] = field(default_factory=tuple)
     default_duration_ms: int = 240_000
     poll_interval_sec: float = 0.5
@@ -117,6 +118,7 @@ class Config:
             background_max_bytes=_int(
                 source, "RADIO_BG_MAX_BYTES", 8 * 1024 * 1024
             ),
+            listener_ttl_sec=_int(source, "RADIO_LISTENER_TTL", 30),
             upstream_timeout=_float(source, "RADIO_UPSTREAM_TIMEOUT", 8.0),
             upstream_retries=_int(source, "RADIO_UPSTREAM_RETRIES", 2),
             user_agent=_text(source, "RADIO_USER_AGENT", cls.user_agent),

@@ -9,6 +9,7 @@ const stationName = $("stationName");
 const stationSubtitle = $("stationSubtitle");
 const noticeBar = $("noticeBar");
 const syncStatus = $("syncStatus");
+const listenerCount = $("listenerCount");
 const nicknameBtn = $("nicknameBtn");
 const livePill = $("livePill");
 const title = $("title");
@@ -19,6 +20,8 @@ const durationEl = $("duration");
 const progressTrack = $("progressTrack");
 const progressFill = $("progressFill");
 const playBtn = $("playBtn");
+const voteSkipBtn = $("voteSkipBtn");
+const voteInfo = $("voteInfo");
 const muteBtn = $("muteBtn");
 const volumeEl = $("volume");
 const audioMode = $("audioMode");
@@ -75,6 +78,7 @@ const state = {
   sidebarLoading: false,
   showTranslation: true,
   nickname: "",
+  listenerId: "",
   uiConfig: null,
   backgrounds: [],
   bgIntervalSec: 300,
@@ -110,6 +114,22 @@ function storageSet(key, value) {
   } catch (_) {
     /* ignore */
   }
+}
+
+function ensureListenerId() {
+  const existing = storageGet("radio.listenerId") || "";
+  if (/^[A-Za-z0-9_-]{8,64}$/.test(existing)) {
+    state.listenerId = existing;
+    return;
+  }
+  let id = "";
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    id = window.crypto.randomUUID().replace(/-/g, "");
+  } else {
+    id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+  }
+  state.listenerId = id;
+  storageSet("radio.listenerId", id);
 }
 
 async function fetchJSON(url, options = {}) {
@@ -171,6 +191,43 @@ function refreshStatus() {
     return;
   }
   setPill("live", "已同步");
+}
+
+function updateListenerUI(now) {
+  const listeners = now && Number.isFinite(Number(now.listeners)) ? Number(now.listeners) : 0;
+  listenerCount.textContent = `一起听 ${listeners} 人`;
+}
+
+function updateVoteUI(now) {
+  const hasTrack = Boolean(now && now.track);
+  const vote = (now && now.vote) || {};
+  const votes = Number(vote.votes) || 0;
+  const needed = Number(vote.needed) || 1;
+  voteInfo.textContent = hasTrack ? `${votes} / ${needed}` : "0 / 1";
+  voteSkipBtn.disabled = !hasTrack || Boolean(vote.voted);
+  voteSkipBtn.textContent = vote.voted ? "已投票" : "投票切歌";
+}
+
+async function voteSkip() {
+  if (!state.now || !state.now.track) return;
+  voteSkipBtn.disabled = true;
+  try {
+    const data = await fetchJSON("/api/vote-skip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lid: state.listenerId }),
+      timeout: 10_000,
+    });
+    if (data.now) applyNow(data.now);
+    if (data.switched) {
+      voteInfo.textContent = "已切歌";
+      loadSidebar();
+      pollSoon();
+    }
+  } catch (error) {
+    voteInfo.textContent = errorText(error, "投票失败");
+    pollNow();
+  }
 }
 
 function sourceLabel(source) {
@@ -480,6 +537,7 @@ function applyNow(now) {
   state.seq = now.seq;
   state.audioRev = now.audio_rev;
   state.serverPaused = Boolean(now.paused);
+  updateListenerUI(now);
 
   if (!now.track) {
     state.sources = [];
@@ -492,6 +550,7 @@ function applyNow(now) {
       audio.load();
     }
     clearTrack();
+    updateVoteUI(now);
     return;
   }
 
@@ -541,6 +600,7 @@ function applyNow(now) {
 
   setLivePill();
   updatePlayButton();
+  updateVoteUI(now);
   refreshStatus();
 }
 
@@ -576,7 +636,10 @@ async function pollNow() {
   clearTimeout(state.pollTimer);
   const started = performance.now();
   try {
-    const data = await fetchJSON("/now.json", { timeout: 8_000 });
+    const data = await fetchJSON(
+      `/now.json?lid=${encodeURIComponent(state.listenerId)}`,
+      { timeout: 8_000 }
+    );
     const finished = performance.now();
     const sample = data.server_time_ms + (finished - started) / 2 - Date.now();
     state.clockOffset = state.clockOffset ? state.clockOffset * 0.82 + sample * 0.18 : sample;
@@ -746,10 +809,37 @@ function renderQueue(items) {
     copy.appendChild(sub);
     row.appendChild(copy);
 
+    const actions = document.createElement("div");
+    actions.className = "queue-actions";
+
     const time = document.createElement("span");
     time.className = "queue-time";
     time.textContent = fmtTime(item.duration_ms);
-    row.appendChild(time);
+    actions.appendChild(time);
+
+    const pins = Number(item.priority) || 0;
+    const pinBtn = document.createElement("button");
+    pinBtn.type = "button";
+    pinBtn.className = `pin-btn${pins > 0 ? " active" : ""}`;
+    pinBtn.textContent = pins > 0 ? `顶 ${pins}` : "顶";
+    pinBtn.title = "置顶这首歌";
+    pinBtn.addEventListener("click", async () => {
+      pinBtn.disabled = true;
+      try {
+        await fetchJSON("/api/queue/pin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ queue_id: item.id, lid: state.listenerId }),
+          timeout: 10_000,
+        });
+        await loadSidebar();
+        pollSoon();
+      } catch (_) {
+        pinBtn.disabled = false;
+      }
+    });
+    actions.appendChild(pinBtn);
+    row.appendChild(actions);
     queueList.appendChild(row);
   }
 }
@@ -793,7 +883,10 @@ async function loadSidebar() {
   if (state.sidebarLoading) return;
   state.sidebarLoading = true;
   try {
-    const data = await fetchJSON("/api/state", { timeout: 8_000 });
+    const data = await fetchJSON(
+      `/api/state?lid=${encodeURIComponent(state.listenerId)}`,
+      { timeout: 8_000 }
+    );
     renderQueue(data.queue || []);
     renderMessages(data.messages || []);
     if (data.now && data.now.queue) {
@@ -1061,6 +1154,8 @@ playBtn.addEventListener("click", () => {
   updatePlayButton();
 });
 
+voteSkipBtn.addEventListener("click", voteSkip);
+
 muteBtn.addEventListener("click", () => {
   audio.muted = !audio.muted;
   muteBtn.setAttribute("aria-label", audio.muted ? "取消静音" : "静音");
@@ -1167,6 +1262,7 @@ document.addEventListener("visibilitychange", () => {
 /* ---------- init ---------- */
 
 loadNickname();
+ensureListenerId();
 
 const savedVolume = storageGet("radio.volume");
 if (savedVolume !== null) volumeEl.value = savedVolume;

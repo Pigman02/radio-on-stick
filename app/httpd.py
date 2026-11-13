@@ -192,6 +192,33 @@ class RadioHandler(BaseHTTPRequestHandler):
     def _ip_key(self) -> str:
         return make_ip_key(self._client_ip(), self.app.config.ip_hash_salt)
 
+    def _voter_key(self, value: Any) -> str:
+        text = str(value or "").strip()
+        if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", text):
+            return f"v:{text}"
+        return f"ip:{self._ip_key()}"
+
+    def _query_listener(self, query_string: str) -> str | None:
+        params = urllib.parse.parse_qs(query_string)
+        values = params.get("lid") or []
+        if not values:
+            return None
+        text = str(values[0] or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", text):
+            return None
+        key = f"v:{text}"
+        self.app.listeners.touch(key)
+        return key
+
+    def _decorate_snapshot(
+        self, now: dict[str, Any], voter: str | None = None
+    ) -> dict[str, Any]:
+        listeners = self.app.listeners.count()
+        seq = int(now.get("seq") or 0)
+        now["listeners"] = listeners
+        now["vote"] = self.app.votes.stats(seq, listeners, voter)
+        return now
+
     def _read_json(self) -> dict[str, Any]:
         length_header = self.headers.get("Content-Length")
         if not length_header:
@@ -316,18 +343,23 @@ class RadioHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/now.json":
-            self._send_json(200, self.app.player.snapshot())
+            voter = self._query_listener(parsed.query)
+            now = self.app.player.snapshot()
+            self._send_json(200, self._decorate_snapshot(now, voter))
             return
         if path == "/api/config":
             self._send_json(200, self._public_config())
             return
         if path == "/api/state":
+            voter = self._query_listener(parsed.query)
+            now = self._decorate_snapshot(self.app.player.snapshot(), voter)
             self._send_json(
                 200,
                 {
-                    "now": self.app.player.snapshot(),
+                    "now": now,
                     "queue": self.app.db.list_queue(20),
                     "messages": self.app.db.list_messages(20),
+                    "listeners": now["listeners"],
                 },
             )
             return
@@ -417,6 +449,12 @@ class RadioHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/report":
             self._handle_report()
+            return
+        if path == "/api/vote-skip":
+            self._handle_vote_skip()
+            return
+        if path == "/api/queue/pin":
+            self._handle_queue_pin()
             return
         if path.startswith("/api/admin/"):
             self._require_admin()
@@ -535,6 +573,54 @@ class RadioHandler(BaseHTTPRequestHandler):
                 "request_id": queue_id,
                 "track": track_summary,
                 "queue": {"pending": self.app.db.count_pending()},
+            },
+        )
+
+    def _handle_vote_skip(self) -> None:
+        data = self._read_json()
+        voter = self._voter_key(data.get("lid") or data.get("voter_id"))
+        self.app.listeners.touch(voter)
+        now = self.app.player.snapshot(ensure=False)
+        if not now.get("track"):
+            raise ApiError(409, "no_track", "当前没有播放")
+        seq = int(now.get("seq") or 0)
+        listeners = self.app.listeners.count()
+        result = self.app.votes.vote(seq, voter, listeners)
+        switched = False
+        if result["added"] and result["passed"]:
+            self.app.player.skip("vote")
+            now = self.app.player.snapshot()
+            self.app.votes.reset(int(now.get("seq") or 0))
+            switched = True
+        now = self._decorate_snapshot(now, voter)
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "switched": switched,
+                "vote": now["vote"],
+                "now": now,
+            },
+        )
+
+    def _handle_queue_pin(self) -> None:
+        data = self._read_json()
+        try:
+            queue_id = int(data.get("queue_id"))
+        except (TypeError, ValueError) as exc:
+            raise ApiError(400, "bad_queue_id", "无效的队列项") from exc
+        voter = self._voter_key(data.get("lid") or data.get("voter_id"))
+        result = self.app.db.pin_queue(queue_id, voter)
+        if result is None:
+            raise ApiError(404, "queue_not_found", "这首歌已经不在队列里")
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "queue_id": queue_id,
+                "pins": result["pins"],
+                "pinned": result["pinned"],
+                "queue": self.app.db.list_queue(50),
             },
         )
 

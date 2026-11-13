@@ -11,10 +11,12 @@ const adminPanel = $("adminPanel");
 const adminNow = $("adminNow");
 const adminQueue = $("adminQueue");
 const adminMessages = $("adminMessages");
+const adminToggle = $("adminToggle");
 const adminSkip = $("adminSkip");
-const adminPause = $("adminPause");
-const adminResume = $("adminResume");
 const adminClearQueue = $("adminClearQueue");
+const adminPosition = $("adminPosition");
+const adminDuration = $("adminDuration");
+const adminProgressFill = $("adminProgressFill");
 const adminSearchForm = $("adminSearchForm");
 const adminSearchInput = $("adminSearchInput");
 const adminSearchStatus = $("adminSearchStatus");
@@ -36,6 +38,11 @@ const state = {
   token: "",
   busy: false,
   tab: "control",
+  now: null,
+  nowFetchedAt: 0,
+  clockOffset: 0,
+  pollTimer: null,
+  adminVoter: "",
 };
 
 function sessionGet(key) {
@@ -53,6 +60,22 @@ function sessionSet(key, value) {
   } catch (_) {
     /* ignore */
   }
+}
+
+function ensureAdminVoter() {
+  const existing = sessionGet("radio.adminVoter") || "";
+  if (/^[A-Za-z0-9_-]{8,64}$/.test(existing)) {
+    state.adminVoter = existing;
+    return;
+  }
+  let id = "";
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    id = window.crypto.randomUUID().replace(/-/g, "");
+  } else {
+    id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+  }
+  state.adminVoter = id;
+  sessionSet("radio.adminVoter", id);
 }
 
 async function fetchJSON(url, options = {}) {
@@ -132,7 +155,7 @@ function showPanel() {
   adminPanel.classList.remove("hidden");
 }
 
-function adminRow(titleText, subText, actionText, action) {
+function adminRow(titleText, subText, actionText, action, actionClass = "") {
   const row = document.createElement("div");
   row.className = "admin-row";
   const copy = document.createElement("div");
@@ -149,6 +172,7 @@ function adminRow(titleText, subText, actionText, action) {
   if (actionText && action) {
     const button = document.createElement("button");
     button.type = "button";
+    if (actionClass) button.className = actionClass;
     button.textContent = actionText;
     button.addEventListener("click", action);
     row.appendChild(button);
@@ -156,8 +180,10 @@ function adminRow(titleText, subText, actionText, action) {
   return row;
 }
 
-function applyState(data) {
-  const now = data.now || {};
+function renderNow(now) {
+  state.now = now;
+  state.nowFetchedAt = performance.now();
+  state.clockOffset = Number(now.server_time_ms || Date.now()) - Date.now();
   adminNow.textContent = "";
   if (now.track) {
     const strong = document.createElement("strong");
@@ -171,47 +197,133 @@ function applyState(data) {
       next.textContent = `下一首：${now.next.title} / ${now.next.artist || "未知歌手"}`;
       adminNow.appendChild(next);
     }
+    adminToggle.disabled = false;
+    adminToggle.textContent = now.paused ? "恢复电台" : "暂停电台";
   } else {
     adminNow.textContent = "当前没有播放。添加曲目后会自动开始。";
+    adminToggle.disabled = true;
+    adminToggle.textContent = "暂停电台";
   }
+  updateAdminProgress();
+}
 
+function renderQueueAdmin(queue) {
   adminQueue.textContent = "";
-  const queue = data.queue || [];
   if (!queue.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
     empty.textContent = "队列为空";
     adminQueue.appendChild(empty);
-  } else {
-    for (const item of queue) {
-      const sub = [item.artist || "未知歌手", item.status === "playing" ? "播放中" : "等待中"];
-      if (item.nickname) sub.push(`by ${item.nickname}`);
+    return;
+  }
+  for (const item of queue) {
+    const sub = [item.artist || "未知歌手", item.status === "playing" ? "播放中" : "等待中"];
+    if (item.nickname) sub.push(`by ${item.nickname}`);
+    const pins = Number(item.priority) || 0;
+    if (item.status === "pending") {
+      adminQueue.appendChild(
+        adminRow(
+          item.title || "未知曲目",
+          sub.join(" · "),
+          pins > 0 ? `置顶 ${pins}` : "置顶",
+          async (event) => {
+            const button = event.currentTarget;
+            button.disabled = true;
+            try {
+              await adminJson("/api/queue/pin", {
+                queue_id: item.id,
+                voter_id: state.adminVoter,
+              });
+              await loadState();
+              pollState();
+            } catch (error) {
+              adminSearchStatus.textContent = errorText(error, "置顶失败");
+              adminSearchStatus.dataset.tone = "error";
+              button.disabled = false;
+            }
+          },
+          "pin-btn"
+        )
+      );
+    } else {
       adminQueue.appendChild(adminRow(item.title || "未知曲目", sub.join(" · "), "", null));
     }
   }
+}
 
+function renderMessagesAdmin(messages) {
   adminMessages.textContent = "";
-  const messages = data.messages || [];
   if (!messages.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
     empty.textContent = "还没有留言";
     adminMessages.appendChild(empty);
-  } else {
-    for (const item of messages) {
-      adminMessages.appendChild(
-        adminRow(
-          item.nickname || "匿名",
-          `${item.body || ""}${item.created_at ? ` · ${fmtRelative(item.created_at)}` : ""}`,
-          "隐藏",
-          async () => {
-            await adminJson("/api/admin/hide-message", { id: item.id });
-            await loadState();
-          }
-        )
-      );
-    }
+    return;
   }
+  for (const item of messages) {
+    adminMessages.appendChild(
+      adminRow(
+        item.nickname || "匿名",
+        `${item.body || ""}${item.created_at ? ` · ${fmtRelative(item.created_at)}` : ""}`,
+        "隐藏",
+        async () => {
+          await adminJson("/api/admin/hide-message", { id: item.id });
+          await loadState();
+        }
+      )
+    );
+  }
+}
+
+function updateAdminProgress() {
+  const now = state.now;
+  if (!now || !now.track) {
+    adminProgressFill.style.width = "0%";
+    adminPosition.textContent = "00:00";
+    adminDuration.textContent = "--:--";
+    return;
+  }
+  const duration = Number(now.duration_ms) || 0;
+  let position = Number(now.position_ms) || 0;
+  if (!now.paused) {
+    position = Math.max(0, Date.now() + state.clockOffset - Number(now.started_at_ms || 0));
+  }
+  if (duration > 0) position = Math.min(position, duration);
+  const percent = duration > 0 ? (position / duration) * 100 : 0;
+  adminProgressFill.style.width = `${Math.min(100, Math.max(0, percent)).toFixed(2)}%`;
+  adminPosition.textContent = fmtTime(position);
+  adminDuration.textContent = fmtTime(duration, now.track.duration_estimated);
+}
+
+function pollState() {
+  if (!state.token) return;
+  fetchJSON("/api/state", { timeout: 6_000 })
+    .then((data) => {
+      renderNow(data.now || {});
+      renderQueueAdmin(data.queue || []);
+      renderMessagesAdmin(data.messages || []);
+    })
+    .catch(() => {
+      /* keep last state */
+    });
+}
+
+function startPolling() {
+  stopPolling();
+  state.pollTimer = setInterval(pollState, 4_000);
+}
+
+function stopPolling() {
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+function applyState(data) {
+  renderNow(data.now || {});
+  renderQueueAdmin(data.queue || []);
+  renderMessagesAdmin(data.messages || []);
 
   const settings = data.settings || {};
   setStationName.value = settings.station_name || "";
@@ -221,6 +333,7 @@ function applyState(data) {
   setBgInterval.value = String(settings.background_interval_sec || 300);
 
   renderGallery(data.backgrounds || []);
+  startPolling();
 }
 
 function renderGallery(items) {
@@ -318,6 +431,7 @@ function logout() {
   state.token = "";
   sessionSet("radio.adminToken", null);
   adminToken.value = "";
+  stopPolling();
   showLogin();
   setStatus("offline", "未登录");
 }
@@ -465,7 +579,7 @@ async function search(event) {
 
 function switchTab(tab) {
   state.tab = tab;
-  for (const button of document.querySelectorAll(".admin-tabs button")) {
+  for (const button of document.querySelectorAll(".admin-nav button")) {
     button.classList.toggle("active", button.dataset.tab === tab);
   }
   for (const section of document.querySelectorAll(".admin-tab")) {
@@ -478,18 +592,26 @@ adminToken.addEventListener("keydown", (event) => {
   if (event.key === "Enter") login();
 });
 adminLogout.addEventListener("click", logout);
+adminToggle.addEventListener("click", () => {
+  const paused = Boolean(state.now && state.now.paused);
+  adminAction(
+    paused ? "/api/admin/resume" : "/api/admin/pause",
+    paused ? "已恢复" : "已暂停"
+  );
+});
 adminSkip.addEventListener("click", () => adminAction("/api/admin/skip", "已切歌"));
-adminPause.addEventListener("click", () => adminAction("/api/admin/pause", "已暂停"));
-adminResume.addEventListener("click", () => adminAction("/api/admin/resume", "已恢复"));
 adminClearQueue.addEventListener("click", () =>
   adminAction("/api/admin/clear-queue", "已清空队列")
 );
 saveSettings.addEventListener("click", savePageSettings);
 bgUpload.addEventListener("click", uploadBackground);
 adminSearchForm.addEventListener("submit", search);
-for (const button of document.querySelectorAll(".admin-tabs button")) {
+for (const button of document.querySelectorAll(".admin-nav button")) {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 }
+
+ensureAdminVoter();
+setInterval(updateAdminProgress, 500);
 
 state.token = sessionGet("radio.adminToken") || "";
 if (state.token) {

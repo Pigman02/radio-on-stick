@@ -7,7 +7,7 @@
   <title>管理面板</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/admin.css?v=1">
+  <link rel="stylesheet" href="/admin.css?v=2">
 </head>
 <body class="admin-page">
   <div class="backdrop" aria-hidden="true">
@@ -46,23 +46,28 @@
 
     <div id="adminPanel" class="hidden">
       <div class="card admin-workbench">
-        <div class="admin-tabs" role="tablist">
-          <button type="button" data-tab="control" class="active">播放</button>
-          <button type="button" data-tab="text">页面文字</button>
-          <button type="button" data-tab="background">背景</button>
-          <button type="button" data-tab="messages">留言</button>
-        </div>
-
+        <div class="admin-layout">
+          <nav class="admin-nav" role="tablist">
+            <button type="button" data-tab="control" class="active">播放控制</button>
+            <button type="button" data-tab="text">页面文字</button>
+            <button type="button" data-tab="background">背景图</button>
+            <button type="button" data-tab="messages">留言管理</button>
+          </nav>
+          <div class="admin-content">
         <section id="tab-control" class="admin-tab">
           <div id="adminNow" class="admin-now"></div>
+          <div class="admin-progress-row">
+            <span id="adminPosition">00:00</span>
+            <div class="progress" role="progressbar" aria-label="播放进度"><div class="progress-fill" id="adminProgressFill"></div></div>
+            <span id="adminDuration">--:--</span>
+          </div>
           <div class="admin-actions">
-            <button id="adminSkip" class="primary-btn" type="button">切歌</button>
-            <button id="adminPause" type="button">暂停</button>
-            <button id="adminResume" type="button">恢复</button>
+            <button id="adminToggle" class="primary-btn" type="button">暂停电台</button>
+            <button id="adminSkip" type="button">切歌</button>
             <button id="adminClearQueue" type="button">清空队列</button>
           </div>
 
-          <h3>队列</h3>
+          <h3>队列 <span class="admin-hint">最右侧可置顶，每人每首一次</span></h3>
           <div id="adminQueue" class="admin-list"></div>
 
           <h3>加入播放列表</h3>
@@ -98,6 +103,8 @@
         <section id="tab-messages" class="admin-tab hidden">
           <div id="adminMessages" class="admin-list"></div>
         </section>
+          </div>
+        </div>
 
         <div class="admin-footer">
           <button id="adminLogout" class="ghost-btn" type="button">退出管理</button>
@@ -106,6 +113,6 @@
     </div>
   </div>
 
-  <script src="/admin.js?v=1"></script>
+  <script src="/admin.js?v=2"></script>
 </body>
 </html>
