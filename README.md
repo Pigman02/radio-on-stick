@@ -13,7 +13,9 @@
 - 一起听人数、50% 切歌投票、队列置顶
 - 留言区为直播评论样式，底部通栏、从下往上滚动、可折叠
 - `/admin` 独立管理页：切歌、暂停/恢复、进度、队列、页面文字、背景上传与轮换
-- 背景随机轮换，支持删除；音频失败自动尝试备用直连
+- 背景随机轮换，支持本地图片和网络图床 URL
+- 客户端提前预载下一首；歌词跟随本地播放进度，不再强行对齐服务器
+- Nginx 提供 HTTP/HTTPS（自签名证书，可替换）
 
 ## 快速开始
 
@@ -56,6 +58,8 @@ RADIO_IP_SALT=随机字符串
 - 点歌提交服务端生成的 `candidate_id`，不信任客户端音频 URL。
 - 播放列表播完后进入待机；再次添加新曲目会继续播放。
 - 音频直连优先，失败后尝试备用链接；仍失败时上报并重新解析。
+- 播放器会在当前曲目剩余约 45 秒时预载下一首，并预取封面/歌词。
+- 歌词高亮和进度条使用本地 `audio.currentTime`，音画以实际播放为准。
 - 一起听人数按唯一 IP 统计；投票达到在线人数 50% 自动切歌。
 - 队列置顶每人每首一次，顶数越多越靠前。
 - 新增音源：实现 `name`、`display_name`、`search(keyword, limit)`，再调用 `aggregator.register_source(...)`。
@@ -86,7 +90,9 @@ RADIO_IP_SALT=随机字符串
 | POST | `/api/admin/settings` | 修改页面文字 |
 | POST | `/api/admin/hide-message` | 隐藏留言 |
 | POST | `/api/admin/background` | 上传背景 |
-| POST | `/api/admin/background/delete` | 删除背景 |
+| POST | `/api/admin/background/delete` | 删除本地上传背景 |
+| POST | `/api/admin/background/url` | 添加网络图床背景 |
+| POST | `/api/admin/background/url/delete` | 删除网络背景 |
 
 管理接口需要 `Authorization: Bearer <RADIO_ADMIN_TOKEN>`。
 
@@ -94,11 +100,12 @@ RADIO_IP_SALT=随机字符串
 
 ```text
 app/            # 服务端与前端资源
-deploy/         # Nginx、systemd、安装、打包
+deploy/         # Nginx、systemd、安装、TLS、打包
 docs/           # 路线图
 tests/          # unittest 与响应夹具
 tools/          # radioctl CLI
 .github/        # GitHub Actions
+AGENTS.md       # 后续开发约定
 data/           # 运行时数据（gitignore）
 ```
 
@@ -118,7 +125,11 @@ cd radio-on-stick-*
 sudo bash deploy/install.sh
 ```
 
-安装脚本会安装 Nginx、创建 `radio` 用户、部署到 `/opt/radio-on-stick`、数据放 `/var/lib/radio-on-stick`，并启动 systemd 服务。详细说明见 `deploy/README.md`。
+安装脚本会安装 Nginx、创建 `radio` 用户、部署到 `/opt/radio-on-stick`、数据放 `/var/lib/radio-on-stick`，生成自签名 TLS 证书并启动 systemd 服务。详细说明见 `deploy/README.md`。
+
+- HTTP：`http://<设备IP>/`
+- HTTPS：`https://<设备IP>/`（自签名，首次需手动信任）
+- 替换 `/etc/radio-on-stick/tls/fullchain.pem` 和 `privkey.pem` 后执行 `sudo systemctl reload nginx` 即可换成正式证书。
 
 ## 说明
 

@@ -19,8 +19,11 @@ from .db import now_ms
 from .ratelimit import make_ip_key
 from .settings import (
     SettingsError,
+    add_background_url,
+    load_background_urls,
     load_ui_settings,
     public_settings,
+    remove_background_url,
     save_ui_settings,
 )
 
@@ -293,24 +296,33 @@ class RadioHandler(BaseHTTPRequestHandler):
 
     def _backgrounds(self) -> list[dict[str, Any]]:
         root = self.app.config.backgrounds_dir
-        if not root.is_dir():
-            return []
         items: list[dict[str, Any]] = []
-        for path in root.iterdir():
-            if not path.is_file() or not _BACKGROUND_NAME.match(path.name):
-                continue
-            try:
-                modified = int(path.stat().st_mtime)
-            except OSError:
-                continue
+        if root.is_dir():
+            for path in root.iterdir():
+                if not path.is_file() or not _BACKGROUND_NAME.match(path.name):
+                    continue
+                try:
+                    modified = int(path.stat().st_mtime)
+                except OSError:
+                    continue
+                items.append(
+                    {
+                        "name": path.name,
+                        "url": f"/backgrounds/{path.name}",
+                        "type": "local",
+                        "mtime": modified,
+                    }
+                )
+            items.sort(key=lambda item: item["mtime"], reverse=True)
+        for url in load_background_urls(self.app.db):
             items.append(
                 {
-                    "name": path.name,
-                    "url": f"/backgrounds/{path.name}",
-                    "mtime": modified,
+                    "name": url,
+                    "url": url,
+                    "type": "network",
+                    "mtime": 0,
                 }
             )
-        items.sort(key=lambda item: item["mtime"], reverse=True)
         return items
 
     def _public_config(self) -> dict[str, Any]:
@@ -780,6 +792,23 @@ class RadioHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/admin/background":
             self._handle_background_upload()
+            return
+        if path == "/api/admin/background/url":
+            data = self._read_json()
+            try:
+                add_background_url(self.app.db, data.get("url"))
+            except SettingsError as exc:
+                raise ApiError(400, "bad_background_url", str(exc)) from exc
+            self._send_json(
+                200, {"ok": True, "backgrounds": self._backgrounds()}
+            )
+            return
+        if path == "/api/admin/background/url/delete":
+            data = self._read_json()
+            remove_background_url(self.app.db, data.get("url"))
+            self._send_json(
+                200, {"ok": True, "backgrounds": self._backgrounds()}
+            )
             return
         if path == "/api/admin/background/delete":
             data = self._read_json()

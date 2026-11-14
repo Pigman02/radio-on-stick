@@ -171,6 +171,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(first["listeners"], 1)
         self.assertEqual(second["listeners"], 1)
 
+    def test_now_next_contains_preload_audio(self):
+        self.app.db.insert_track(
+            {
+                "id": "t2",
+                "source": "netease",
+                "source_id": "t2",
+                "title": "Second Song",
+                "artist": "Second Artist",
+                "duration_ms": 10_000,
+                "audio_primary": "https://example.invalid/second.mp3",
+                "audio_alternates": [],
+                "enabled": True,
+                "created_at": 2,
+            }
+        )
+        _, now = self.request("GET", "/now.json")
+        self.assertEqual(now["next"]["id"], "t2")
+        self.assertEqual(
+            now["next"]["audio"]["direct"],
+            "https://example.invalid/second.mp3",
+        )
+
     def test_upcoming_merges_current_and_playlist(self):
         self.app.db.insert_track(
             {
@@ -329,6 +351,44 @@ class ApiTests(unittest.TestCase):
         self.assertIn("messages", data)
         self.assertIn("settings", data)
         self.assertIn("backgrounds", data)
+
+    def test_network_background_url(self):
+        url = "https://example.invalid/background.jpg"
+        status, data = self.request(
+            "POST",
+            "/api/admin/background/url",
+            {"url": url},
+            token="secret",
+        )
+        self.assertEqual(status, 200, data)
+        _, config = self.request("GET", "/api/config")
+        self.assertTrue(
+            any(
+                item["url"] == url and item["type"] == "network"
+                for item in config["backgrounds"]
+            )
+        )
+
+        status, data = self.request(
+            "POST",
+            "/api/admin/background/url/delete",
+            {"url": url},
+            token="secret",
+        )
+        self.assertEqual(status, 200, data)
+        _, config = self.request("GET", "/api/config")
+        self.assertFalse(
+            any(item["url"] == url for item in config["backgrounds"])
+        )
+
+        status, data = self.request(
+            "POST",
+            "/api/admin/background/url",
+            {"url": "javascript:alert(1)"},
+            token="secret",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "bad_background_url")
 
     def test_background_upload_and_delete(self):
         png = b"\x89PNG\r\n\x1a\n" + b"0" * 128

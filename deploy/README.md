@@ -32,9 +32,13 @@ sudo bash deploy/install.sh
 - 首次安装生成 `/etc/radio-on-stick.env` 和随机管理 token
 - 安装并启动 `radio-on-stick.service`
 - 安装 Nginx 站点，只允许 Tailscale 和私网访问
+- 生成自签名 TLS 证书到 `/etc/radio-on-stick/tls/`
 - 设置 journald 日志上限 32MB
 
-安装完成会打印管理 token。管理页：`http://<设备IP>/admin`。
+安装完成会打印管理 token。管理页：
+
+- `https://<设备IP>/admin`（自签名证书，首次需手动信任）
+- `http://<设备IP>/admin`（仍保留 HTTP）
 
 ## 首次检查
 
@@ -43,6 +47,7 @@ systemctl status radio-on-stick
 journalctl -u radio-on-stick -n 50 --no-pager
 curl -s http://127.0.0.1:8080/healthz
 curl -sI http://127.0.0.1/
+curl -k -sI https://127.0.0.1/
 ```
 
 从 Tailscale 或局域网设备打开主页，设置昵称，搜索并点歌。
@@ -91,7 +96,9 @@ PY
 
 ## 安全提醒
 
-- 管理 token 走明文 HTTP（Tailscale 本身加密）；如非 Tailscale 环境，请加 TLS。
+- HTTPS 默认使用自签名证书；浏览器会提示，信任后可加密管理 token。
+- 换成正式证书：替换 `/etc/radio-on-stick/tls/fullchain.pem` 和 `privkey.pem`，执行 `sudo nginx -t && sudo systemctl reload nginx`。
+- 不要把 `privkey.pem` 提交到 git。
 - Nginx 已覆盖 `X-Real-IP`，不要让 Python 端口暴露到局域网。
 - 建议修改 SSH 密码、增加 SSH key，并只允许 Tailscale/内网访问。
 - 401MB 设备上不要同时运行其他重型服务。

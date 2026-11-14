@@ -98,6 +98,9 @@ const state = {
   messageTs: Date.now() - 5000,
   lastMessageCount: -1,
   messagesCollapsed: false,
+  preloadAudio: null,
+  preloadKey: "",
+  preloadCover: null,
 };
 
 function clamp(value, min, max) {
@@ -512,6 +515,57 @@ function unloadAudio() {
   state.audioKey = null;
 }
 
+function stopPreload() {
+  if (state.preloadAudio) {
+    state.preloadAudio.removeAttribute("src");
+    state.preloadAudio.load();
+    state.preloadAudio = null;
+  }
+  state.preloadCover = null;
+  state.preloadKey = "";
+}
+
+function preloadNext(now = state.now) {
+  const next = now && now.next;
+  const url =
+    next && next.audio
+      ? next.audio.direct || (next.audio.alternates || [])[0] || ""
+      : "";
+  if (!state.userWantsPlay || !next || !url || now.paused) {
+    stopPreload();
+    return;
+  }
+
+  const key = `${next.id}:${url}`;
+  const duration = Number(now.duration_ms) || 0;
+  const position = now.paused
+    ? Number(now.position_ms) || 0
+    : Date.now() + state.clockOffset - Number(now.started_at_ms || 0);
+  const remaining = duration - position;
+  if (remaining > 45_000) {
+    if (state.preloadKey && state.preloadKey !== key) stopPreload();
+    return;
+  }
+  if (state.preloadKey === key) return;
+
+  stopPreload();
+  const element = new Audio();
+  element.preload = "auto";
+  element.src = url;
+  element.load();
+  state.preloadAudio = element;
+  state.preloadKey = key;
+
+  if (next.cover_url) {
+    const image = new Image();
+    image.src = next.cover_url;
+    state.preloadCover = image;
+  }
+  if (next.lyrics_url) {
+    fetch(next.lyrics_url, { cache: "force-cache" }).catch(() => {});
+  }
+}
+
 function tryNextSource(reason) {
   if (!state.userWantsPlay) return;
   if (state.sourceIndex + 1 < state.sources.length) {
@@ -566,6 +620,7 @@ function applyNow(now) {
     }
     clearTrack();
     updateVoteUI(now);
+    stopPreload();
     return;
   }
 
@@ -619,6 +674,7 @@ function applyNow(now) {
   setLivePill();
   updatePlayButton();
   updateVoteUI(now);
+  preloadNext(now);
   refreshStatus();
 }
 
@@ -1205,7 +1261,10 @@ function hideModal(element) {
 function frame() {
   const now = state.now;
   if (now && now.track) {
-    const position = currentPosition(now);
+    const useLocal = Boolean(audio.src) && audio.readyState > 0;
+    const position = useLocal
+      ? Math.max(0, audio.currentTime * 1000)
+      : currentPosition(now);
     const duration = Number(now.duration_ms) || 0;
     const percent = duration > 0 ? clamp((position / duration) * 100, 0, 100) : 0;
     progressFill.style.width = `${percent.toFixed(2)}%`;
@@ -1227,6 +1286,7 @@ playBtn.addEventListener("click", () => {
   if (!audio.paused) {
     state.userWantsPlay = false;
     audio.pause();
+    stopPreload();
     updatePlayButton();
     return;
   }
@@ -1237,11 +1297,13 @@ playBtn.addEventListener("click", () => {
   }
   state.userWantsPlay = true;
   if (ensureSourceLoaded()) {
+    preloadNext();
     updatePlayButton();
     return;
   }
   seekToLive();
   attemptPlay();
+  preloadNext();
   updatePlayButton();
 });
 

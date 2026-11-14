@@ -623,6 +623,18 @@ class Player:
             else:
                 position = max(0, min(duration, now - self._started_at))
             next_track = self._peek_next()
+            next_summary = None
+            if next_track is not None:
+                next_summary = self._track_summary(next_track)
+                next_summary["lyrics_url"] = f"/api/lyrics/{next_track['id']}"
+                next_summary["audio"] = {
+                    "direct": _safe_url(next_track.get("audio_primary")),
+                    "alternates": [
+                        url
+                        for url in (next_track.get("audio_alternates") or [])
+                        if _safe_url(url)
+                    ],
+                }
             base.update(
                 {
                     "track": self._track_summary(track),
@@ -638,7 +650,7 @@ class Player:
                         ],
                     },
                     "lyrics_url": f"/api/lyrics/{track['id']}",
-                    "next": self._track_summary(next_track) if next_track else None,
+                    "next": next_summary,
                     "queue": {
                         "pending": self.db.count_pending(),
                         "playing": bool(self._queue_id),

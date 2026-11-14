@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import urllib.parse
 from typing import Any
 
 from .config import Config
@@ -11,6 +13,8 @@ KEY_SUBTITLE = "ui.subtitle"
 KEY_PAGE_TITLE = "ui.page_title"
 KEY_NOTICE = "ui.notice"
 KEY_BG_INTERVAL = "ui.background_interval_sec"
+KEY_BACKGROUND_URLS = "ui.background_urls"
+MAX_BACKGROUND_URLS = 20
 
 MAX_LENGTHS = {
     KEY_STATION_NAME: 40,
@@ -106,3 +110,59 @@ def public_settings(values: dict[str, Any]) -> dict[str, Any]:
         "notice": values.get(KEY_NOTICE) or "",
         "background_interval_sec": int(values.get(KEY_BG_INTERVAL) or 300),
     }
+
+
+def _valid_background_url(url: Any) -> bool:
+    text = str(url or "").strip()
+    if not text or len(text) > 500:
+        return False
+    try:
+        parts = urllib.parse.urlsplit(text)
+    except ValueError:
+        return False
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+
+
+def load_background_urls(db: Database) -> list[str]:
+    raw = db.get_setting(KEY_BACKGROUND_URLS) or "[]"
+    try:
+        values = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(values, list):
+        return []
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if _valid_background_url(text) and text not in result:
+            result.append(text)
+    return result
+
+
+def save_background_urls(db: Database, urls: list[str]) -> list[str]:
+    values: list[str] = []
+    for url in urls:
+        text = str(url or "").strip()
+        if _valid_background_url(text) and text not in values:
+            values.append(text)
+    db.set_setting(KEY_BACKGROUND_URLS, json.dumps(values, ensure_ascii=False))
+    return values
+
+
+def add_background_url(db: Database, url: Any) -> list[str]:
+    text = str(url or "").strip()
+    if not _valid_background_url(text):
+        raise SettingsError("背景地址必须是 http/https URL")
+    urls = load_background_urls(db)
+    if text in urls:
+        return urls
+    if len(urls) >= MAX_BACKGROUND_URLS:
+        raise SettingsError(f"网络背景最多 {MAX_BACKGROUND_URLS} 个")
+    urls.append(text)
+    return save_background_urls(db, urls)
+
+
+def remove_background_url(db: Database, url: Any) -> list[str]:
+    text = str(url or "").strip()
+    urls = [item for item in load_background_urls(db) if item != text]
+    return save_background_urls(db, urls)
