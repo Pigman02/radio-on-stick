@@ -28,7 +28,7 @@ PY
 
 echo "==> 安装系统依赖（不会升级全系统）"
 apt-get update
-apt-get install -y --no-install-recommends nginx python3
+apt-get install -y --no-install-recommends nginx python3 openssl
 
 echo "==> 创建运行用户和目录"
 if ! id radio >/dev/null 2>&1; then
@@ -66,6 +66,27 @@ EOF
   NEW_TOKEN="${TOKEN}"
 fi
 chown -R radio:radio "${DATA_DIR}"
+
+echo "==> 准备 TLS 证书"
+TLS_DIR="/etc/radio-on-stick/tls"
+install -d -m 0700 -o root -g root "${TLS_DIR}"
+if [[ ! -s "${TLS_DIR}/fullchain.pem" || ! -s "${TLS_DIR}/privkey.pem" ]]; then
+  SAN_PARTS="DNS:localhost,DNS:$(hostname)"
+  IPS="$(hostname -I 2>/dev/null || true) $(tailscale ip -4 2>/dev/null || true) $(tailscale ip -6 2>/dev/null || true)"
+  for ip in ${IPS}; do
+    SAN_PARTS="${SAN_PARTS},IP:${ip}"
+  done
+  openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 825 \
+    -keyout "${TLS_DIR}/privkey.pem" \
+    -out "${TLS_DIR}/fullchain.pem" \
+    -subj "/CN=radio-on-stick" \
+    -addext "subjectAltName=${SAN_PARTS}" >/dev/null 2>&1
+  chmod 0600 "${TLS_DIR}/privkey.pem"
+  chmod 0644 "${TLS_DIR}/fullchain.pem"
+  echo "已生成自签名证书，覆盖：${SAN_PARTS}"
+else
+  echo "保留已有 TLS 证书：${TLS_DIR}"
+fi
 
 echo "==> 安装 systemd 服务"
 install -m 0644 "${SCRIPT_DIR}/radio-on-stick.service" "/etc/systemd/system/${SERVICE}.service"

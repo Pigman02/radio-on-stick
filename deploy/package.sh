@@ -15,7 +15,7 @@ STAGE_DIR="$(mktemp -d)"
 trap 'rm -rf "${STAGE_DIR}"' EXIT
 PKG_ROOT="${STAGE_DIR}/radio-on-stick-${VERSION}"
 mkdir -p "${PKG_ROOT}"
-cp -a app deploy tools tests README.md .gitignore "${PKG_ROOT}/"
+cp -a app deploy tools tests docs AGENTS.md README.md .gitignore "${PKG_ROOT}/"
 find "${PKG_ROOT}" -type d -name '__pycache__' -prune -exec rm -rf {} +
 find "${PKG_ROOT}" -name '*.pyc' -delete
 tar -C "${STAGE_DIR}" \

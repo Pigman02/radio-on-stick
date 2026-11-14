@@ -143,6 +143,33 @@
   margin-top: 24px;
 }
 
+.bg-url-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.bg-url-form input {
+  flex: 1;
+  min-width: 0;
+}
+
+.bg-url-form button {
+  flex: 0 0 auto;
+}
+
+.bg-type {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(5, 8, 14, 0.72);
+  color: var(--muted);
+  font-size: 8px;
+}
+
 @media (max-width: 680px) {
   .admin-shell {
     width: min(100% - 24px, 980px);

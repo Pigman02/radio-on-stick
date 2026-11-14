@@ -31,6 +31,8 @@ const settingsStatus = $("settingsStatus");
 const bgFile = $("bgFile");
 const bgUpload = $("bgUpload");
 const bgStatus = $("bgStatus");
+const bgUrl = $("bgUrl");
+const bgUrlAdd = $("bgUrlAdd");
 const bgGallery = $("bgGallery");
 const adminLogout = $("adminLogout");
 
@@ -325,7 +327,7 @@ function renderGallery(items) {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "还没有上传背景";
+    empty.textContent = "还没有背景";
     bgGallery.appendChild(empty);
     return;
   }
@@ -335,14 +337,25 @@ function renderGallery(items) {
     const image = document.createElement("img");
     image.src = item.url;
     image.alt = "";
+    image.onerror = () => {
+      if (!image.src.endsWith("/placeholder.svg")) image.src = "/placeholder.svg";
+    };
     thumb.appendChild(image);
+    const type = document.createElement("span");
+    type.className = "bg-type";
+    type.textContent = item.type === "network" ? "图床" : "本地上传";
+    thumb.appendChild(type);
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "×";
     button.title = "删除背景";
     button.addEventListener("click", async () => {
       try {
-        await adminJson("/api/admin/background/delete", { name: item.name });
+        if (item.type === "network") {
+          await adminJson("/api/admin/background/url/delete", { url: item.url });
+        } else {
+          await adminJson("/api/admin/background/delete", { name: item.name });
+        }
         bgStatus.textContent = "已删除";
         bgStatus.dataset.tone = "ok";
         await loadState();
@@ -499,6 +512,28 @@ async function uploadBackground() {
   }
 }
 
+async function addBackgroundUrl() {
+  const url = bgUrl.value.trim();
+  if (!url) {
+    bgStatus.textContent = "请输入图片地址";
+    bgStatus.dataset.tone = "error";
+    return;
+  }
+  bgUrlAdd.disabled = true;
+  try {
+    await adminJson("/api/admin/background/url", { url });
+    bgUrl.value = "";
+    bgStatus.textContent = "图床地址已添加";
+    bgStatus.dataset.tone = "ok";
+    await loadState();
+  } catch (error) {
+    bgStatus.textContent = errorText(error, "添加失败");
+    bgStatus.dataset.tone = "error";
+  } finally {
+    bgUrlAdd.disabled = false;
+  }
+}
+
 async function search(event) {
   event.preventDefault();
   const query = adminSearchInput.value.trim();
@@ -589,6 +624,10 @@ adminClearQueue.addEventListener("click", () =>
 );
 saveSettings.addEventListener("click", savePageSettings);
 bgUpload.addEventListener("click", uploadBackground);
+bgUrlAdd.addEventListener("click", addBackgroundUrl);
+bgUrl.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") addBackgroundUrl();
+});
 adminSearchForm.addEventListener("submit", search);
 for (const button of document.querySelectorAll(".admin-nav button")) {
   button.addEventListener("click", () => switchTab(button.dataset.tab));

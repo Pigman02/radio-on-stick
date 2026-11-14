@@ -7,7 +7,7 @@
   <title>管理面板</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/admin.css?v=2">
+  <link rel="stylesheet" href="/admin.css?v=3">
 </head>
 <body class="admin-page">
   <div class="backdrop" aria-hidden="true">
@@ -97,6 +97,10 @@
             <button id="bgUpload" class="primary-btn" type="button">上传背景</button>
           </div>
           <p id="bgStatus" class="form-status" role="status"></p>
+          <div class="bg-url-form">
+            <input id="bgUrl" maxlength="500" placeholder="https://example.com/background.jpg">
+            <button id="bgUrlAdd" class="ghost-btn" type="button">添加图床</button>
+          </div>
           <div id="bgGallery" class="bg-gallery"></div>
         </section>
 
@@ -113,6 +117,6 @@
     </div>
   </div>
 
-  <script src="/admin.js?v=2"></script>
+  <script src="/admin.js?v=3"></script>
 </body>
 </html>
