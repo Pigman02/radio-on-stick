@@ -395,6 +395,7 @@ class RadioHandler(BaseHTTPRequestHandler):
                     "upcoming": self.app.player.upcoming(40),
                     "queue": self.app.db.list_queue(20),
                     "messages": self.app.db.list_messages(20),
+                    "history": self.app.db.list_request_history(self._ip_key(), 30),
                     "listeners": now["listeners"],
                 },
             )
@@ -563,11 +564,14 @@ class RadioHandler(BaseHTTPRequestHandler):
         self._form_guard(data)
         nickname = _clean_text(data.get("nickname"), self.app.config.nickname_max_len) or "匿名"
         candidate_id = str(data.get("candidate_id") or "").strip()
+        track_id = str(data.get("track_id") or "").strip()
         query = _clean_text(data.get("query"), 80)
-        if not candidate_id and not query:
+        if not candidate_id and not query and not track_id:
             raise ApiError(400, "missing_query", "请选择一首歌")
         if candidate_id and not re.fullmatch(r"[a-f0-9]{32}", candidate_id):
             raise ApiError(400, "bad_candidate", "无效的搜索结果")
+        if track_id and len(track_id) > 64:
+            raise ApiError(400, "bad_track", "无效的曲目")
         self._check_banned(nickname)
 
         ip_key = self._ip_key()
@@ -582,23 +586,29 @@ class RadioHandler(BaseHTTPRequestHandler):
         if self.app.db.count_pending() >= self.app.config.queue_max:
             raise ApiError(429, "queue_full", "点歌队列已满，请稍后再试", retry_after=30)
 
-        resolve_decision = self.app.limiter.consume_search(ip_key)
-        if not resolve_decision.allowed:
-            raise ApiError(
-                429,
-                resolve_decision.reason,
-                "点歌请求过于频繁，请稍后再试",
-                retry_after=resolve_decision.retry_after,
-            )
-
-        if candidate_id:
-            track = self.app.aggregator.resolve_candidate(candidate_id)
+        if track_id:
+            track = self.app.db.get_track(track_id)
             if track is None:
-                raise ApiError(410, "search_expired", "搜索结果已过期，请重新搜索")
+                raise ApiError(404, "not_found", "历史曲目已不存在")
+            self.app.db.update_track(track_id, {"enabled": True})
         else:
-            track = self.app.aggregator.resolve(query)
-            if track is None:
-                raise ApiError(404, "not_found", "没有找到这首歌，换个关键词试试")
+            resolve_decision = self.app.limiter.consume_search(ip_key)
+            if not resolve_decision.allowed:
+                raise ApiError(
+                    429,
+                    resolve_decision.reason,
+                    "点歌请求过于频繁，请稍后再试",
+                    retry_after=resolve_decision.retry_after,
+                )
+
+            if candidate_id:
+                track = self.app.aggregator.resolve_candidate(candidate_id)
+                if track is None:
+                    raise ApiError(410, "search_expired", "搜索结果已过期，请重新搜索")
+            else:
+                track = self.app.aggregator.resolve(query)
+                if track is None:
+                    raise ApiError(404, "not_found", "没有找到这首歌，换个关键词试试")
 
         track_summary = _summary(track)
         duplicate_since = now_ms() - self.app.config.duplicate_window_sec * 1000
@@ -623,6 +633,7 @@ class RadioHandler(BaseHTTPRequestHandler):
                 )
 
             queue_id = self.app.db.enqueue(track["id"], ip_key, nickname, None)
+            self.app.db.add_request_history(ip_key, track["id"], nickname)
         logger.info("queued request %s by %s: %s", queue_id, nickname, track.get("title"))
         self._send_json(
             201,

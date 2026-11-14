@@ -77,6 +77,17 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 
+CREATE TABLE IF NOT EXISTS request_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip_key TEXT NOT NULL,
+    track_id TEXT NOT NULL,
+    nickname TEXT,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(track_id) REFERENCES tracks(id)
+);
+CREATE INDEX IF NOT EXISTS idx_request_history_ip
+    ON request_history(ip_key, created_at);
+
 CREATE TABLE IF NOT EXISTS plays (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     track_id TEXT NOT NULL,
@@ -408,6 +419,9 @@ class Database:
                 self._conn.execute(
                     "DELETE FROM messages WHERE created_at < ?", (cutoff,)
                 )
+                self._conn.execute(
+                    "DELETE FROM request_history WHERE created_at < ?", (cutoff,)
+                )
                 self._conn.commit()
             except Exception:
                 self._conn.rollback()
@@ -500,6 +514,31 @@ class Database:
 
     def hide_message(self, message_id: int) -> None:
         self._execute("UPDATE messages SET status = 'hidden' WHERE id = ?", (message_id,))
+
+    def add_request_history(
+        self,
+        ip_key: str,
+        track_id: str,
+        nickname: str | None,
+        created_at: int | None = None,
+    ) -> int:
+        cur = self._execute(
+            "INSERT INTO request_history(ip_key, track_id, nickname, created_at) "
+            "VALUES(?, ?, ?, ?)",
+            (ip_key, track_id, nickname, int(created_at or now_ms())),
+        )
+        return int(cur.lastrowid)
+
+    def list_request_history(self, ip_key: str, limit: int = 30) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            "SELECT h.id, h.track_id, h.nickname, h.created_at, "
+            "t.title, t.artist, t.album, t.duration_ms, t.cover_url, t.source, "
+            "t.duration_estimated "
+            "FROM request_history h JOIN tracks t ON t.id = h.track_id "
+            "WHERE h.ip_key = ? ORDER BY h.id DESC LIMIT ?",
+            (ip_key, max(1, int(limit))),
+        )
+        return [dict(row) for row in rows]
 
     def add_rate_event(self, key: str, action: str, ts: int) -> None:
         self._execute(

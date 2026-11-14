@@ -833,6 +833,30 @@ input[type="range"]::-moz-range-thumb {
   flex: 0 0 auto;
 }
 
+.view-switch {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.view-switch button {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-switch button.active {
+  color: var(--accent);
+  border-color: rgba(255, 184, 107, 0.28);
+  background: var(--accent-soft);
+}
+
 .selected-bar {
   display: flex;
   align-items: center;
@@ -909,6 +933,19 @@ input[type="range"]::-moz-range-thumb {
 
 .playlist-item.played:hover {
   opacity: 0.8;
+}
+
+.playlist-item.selected {
+  border-color: rgba(255, 184, 107, 0.42);
+  background: var(--accent-soft);
+}
+
+.history-item {
+  cursor: pointer;
+}
+
+.history-item:hover {
+  border-color: rgba(255, 184, 107, 0.24);
 }
 
 .playlist-index {

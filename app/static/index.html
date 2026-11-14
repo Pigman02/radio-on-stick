@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#070a12">
   <title>我的电台</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css?v=8">
+  <link rel="stylesheet" href="/style.css?v=9">
 </head>
 <body>
   <div class="bg-layer" id="bgLayerA" aria-hidden="true"></div>
@@ -117,6 +117,10 @@
           </form>
           <button id="requestBtn" class="primary-btn" type="button" disabled>确认点歌</button>
         </div>
+        <div class="view-switch">
+          <button id="viewPlaylistBtn" class="active" type="button" aria-pressed="true">播放列表</button>
+          <button id="viewHistoryBtn" type="button" aria-pressed="false">历史记录</button>
+        </div>
         <div id="selectedBar" class="selected-bar hidden">
           <span id="selectedTrack" class="selected-track"></span>
           <button id="clearSearch" class="ghost-btn" type="button">返回列表</button>
@@ -124,6 +128,7 @@
         <p id="searchStatus" class="form-status" role="status"></p>
         <div id="searchResults" class="search-results hidden"></div>
         <div id="playlistList" class="playlist-list"></div>
+        <div id="historyList" class="playlist-list hidden"></div>
       </section>
 
       <section class="card messages-card" id="messagesCard">
@@ -164,6 +169,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=9"></script>
+  <script src="/app.js?v=11"></script>
 </body>
 </html>
