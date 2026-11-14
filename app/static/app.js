@@ -33,6 +33,9 @@ const lyricsEl = $("lyrics");
 const translationToggle = $("translationToggle");
 const playlistList = $("playlistList");
 const playlistCount = $("playlistCount");
+const historyList = $("historyList");
+const viewPlaylistBtn = $("viewPlaylistBtn");
+const viewHistoryBtn = $("viewHistoryBtn");
 const searchForm = $("searchForm");
 const searchInput = $("searchInput");
 const searchBtn = $("searchBtn");
@@ -91,6 +94,9 @@ const state = {
   bgTimer: null,
   searchResults: [],
   selectedCandidate: null,
+  historyItems: [],
+  selectedHistory: null,
+  viewMode: "playlist",
   searchBusy: false,
   requestBusy: false,
   requestTs: Date.now() - 5000,
@@ -955,6 +961,93 @@ function setMessagesCollapsed(collapsed, persist = true) {
   }
 }
 
+function updateViewButtons() {
+  viewPlaylistBtn.classList.toggle("active", state.viewMode === "playlist");
+  viewHistoryBtn.classList.toggle("active", state.viewMode === "history");
+  viewPlaylistBtn.setAttribute("aria-pressed", String(state.viewMode === "playlist"));
+  viewHistoryBtn.setAttribute("aria-pressed", String(state.viewMode === "history"));
+}
+
+function showCurrentList() {
+  playlistList.classList.toggle("hidden", state.viewMode !== "playlist");
+  historyList.classList.toggle("hidden", state.viewMode !== "history");
+}
+
+function setView(mode) {
+  state.viewMode = mode === "history" ? "history" : "playlist";
+  updateViewButtons();
+  exitSearchMode();
+  showCurrentList();
+}
+
+function renderHistory(items) {
+  state.historyItems = items;
+  historyList.textContent = "";
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "还没有点歌记录";
+    historyList.appendChild(empty);
+    return;
+  }
+
+  for (const [index, item] of items.slice(0, 30).entries()) {
+    const row = document.createElement("div");
+    row.className = "playlist-item history-item";
+    row.dataset.historyId = String(item.id);
+    if (state.selectedHistory && state.selectedHistory.id === item.id) {
+      row.classList.add("selected");
+    }
+
+    const idx = document.createElement("span");
+    idx.className = "playlist-index";
+    idx.textContent = String(index + 1).padStart(2, "0");
+    row.appendChild(idx);
+
+    const image = document.createElement("img");
+    image.className = "playlist-cover";
+    image.src = item.cover_url || "/placeholder.svg";
+    image.alt = "";
+    image.onerror = () => {
+      if (!image.src.endsWith("/placeholder.svg")) image.src = "/placeholder.svg";
+    };
+    row.appendChild(image);
+
+    const copy = document.createElement("div");
+    copy.className = "playlist-copy";
+    const name = document.createElement("span");
+    name.className = "playlist-title";
+    name.textContent = item.title || "未知曲目";
+    const sub = document.createElement("span");
+    sub.className = "playlist-sub";
+    sub.textContent = [
+      item.artist || "未知歌手",
+      item.nickname || "",
+      fmtRelative(item.created_at),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    copy.appendChild(name);
+    copy.appendChild(sub);
+    row.appendChild(copy);
+
+    const side = document.createElement("div");
+    side.className = "playlist-side";
+    const badge = document.createElement("span");
+    badge.className = "playlist-badge";
+    badge.textContent = "点歌历史";
+    const duration = document.createElement("span");
+    duration.className = "playlist-duration";
+    duration.textContent = fmtTime(item.duration_ms, item.duration_estimated);
+    side.appendChild(badge);
+    side.appendChild(duration);
+    row.appendChild(side);
+
+    row.addEventListener("click", () => setSelectedHistory(item));
+    historyList.appendChild(row);
+  }
+}
+
 function renderMessages(items) {
   const wasNearBottom =
     messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight < 48;
@@ -1011,6 +1104,7 @@ async function loadSidebar() {
   try {
     const data = await fetchJSON("/api/state", { timeout: 8_000 });
     renderPlaylist(data.upcoming || []);
+    renderHistory(data.history || []);
     renderMessages(data.messages || []);
   } catch (_) {
     /* sidebar is best-effort */
@@ -1027,8 +1121,16 @@ function setSearchStatus(text, tone = "") {
   else delete searchStatus.dataset.tone;
 }
 
+function clearHistorySelection() {
+  for (const row of historyList.querySelectorAll(".history-item")) {
+    row.classList.remove("selected");
+  }
+}
+
 function setSelectedCandidate(item) {
   state.selectedCandidate = item;
+  state.selectedHistory = null;
+  clearHistorySelection();
   for (const row of searchResults.querySelectorAll(".search-result")) {
     row.classList.toggle("selected", row.dataset.candidateId === item.candidate_id);
   }
@@ -1037,11 +1139,27 @@ function setSelectedCandidate(item) {
   requestBtn.disabled = false;
 }
 
-function clearSelectedCandidate() {
+function setSelectedHistory(item) {
+  state.selectedHistory = item;
   state.selectedCandidate = null;
   for (const row of searchResults.querySelectorAll(".search-result")) {
     row.classList.remove("selected");
   }
+  for (const row of historyList.querySelectorAll(".history-item")) {
+    row.classList.toggle("selected", row.dataset.historyId === String(item.id));
+  }
+  selectedTrack.textContent = `历史：${item.title} / ${item.artist || "未知歌手"}`;
+  selectedBar.classList.remove("hidden");
+  requestBtn.disabled = false;
+}
+
+function clearSelectedCandidate() {
+  state.selectedCandidate = null;
+  state.selectedHistory = null;
+  for (const row of searchResults.querySelectorAll(".search-result")) {
+    row.classList.remove("selected");
+  }
+  clearHistorySelection();
   selectedTrack.textContent = "";
   requestBtn.disabled = true;
 }
@@ -1049,6 +1167,7 @@ function clearSelectedCandidate() {
 function enterSearchMode() {
   searchResults.classList.remove("hidden");
   playlistList.classList.add("hidden");
+  historyList.classList.add("hidden");
   selectedBar.classList.remove("hidden");
   selectedTrack.textContent = "选择一首歌后点确认";
 }
@@ -1056,7 +1175,7 @@ function enterSearchMode() {
 function exitSearchMode() {
   searchResults.classList.add("hidden");
   searchResults.textContent = "";
-  playlistList.classList.remove("hidden");
+  showCurrentList();
   selectedBar.classList.add("hidden");
   clearSelectedCandidate();
   searchInput.value = "";
@@ -1150,7 +1269,9 @@ async function performSearch(event) {
 
 async function requestSelected() {
   if (state.requestBusy) return;
-  if (!state.selectedCandidate) {
+  const selectedHistory = state.selectedHistory;
+  const selectedCandidate = state.selectedCandidate;
+  if (!selectedHistory && !selectedCandidate) {
     setSearchStatus("请先选择一首歌", "error");
     return;
   }
@@ -1162,17 +1283,23 @@ async function requestSelected() {
   requestBtn.disabled = true;
   setSearchStatus("正在加入队列…", "busy");
   try {
+    const payload = selectedHistory
+      ? { track_id: selectedHistory.track_id, nickname: state.nickname, ts: state.requestTs }
+      : {
+          candidate_id: selectedCandidate.candidate_id,
+          nickname: state.nickname,
+          ts: state.requestTs,
+        };
     const data = await fetchJSON("/api/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        candidate_id: state.selectedCandidate.candidate_id,
-        nickname: state.nickname,
-        ts: state.requestTs,
-      }),
+      body: JSON.stringify(payload),
       timeout: 25_000,
     });
-    const trackTitle = (data.track && data.track.title) || state.selectedCandidate.title;
+    const trackTitle =
+      (data.track && data.track.title) ||
+      (selectedHistory && selectedHistory.title) ||
+      (selectedCandidate && selectedCandidate.title);
     state.requestTs = Date.now();
     exitSearchMode();
     setSearchStatus(`已加入队列：${trackTitle}`, "ok");
@@ -1187,7 +1314,7 @@ async function requestSelected() {
     }
   } finally {
     state.requestBusy = false;
-    requestBtn.disabled = !state.selectedCandidate;
+    requestBtn.disabled = !state.selectedCandidate && !state.selectedHistory;
   }
 }
 
@@ -1339,6 +1466,8 @@ nicknameInput.addEventListener("keydown", (event) => {
 searchForm.addEventListener("submit", performSearch);
 requestBtn.addEventListener("click", requestSelected);
 clearSearchBtn.addEventListener("click", exitSearchMode);
+viewPlaylistBtn.addEventListener("click", () => setView("playlist"));
+viewHistoryBtn.addEventListener("click", () => setView("history"));
 messageForm.addEventListener("submit", submitMessage);
 
 document.addEventListener("keydown", (event) => {
@@ -1420,6 +1549,8 @@ document.addEventListener("visibilitychange", () => {
 
 loadNickname();
 setMessagesCollapsed(storageGet("radio.messagesCollapsed") === "1", false);
+updateViewButtons();
+showCurrentList();
 
 const savedVolume = storageGet("radio.volume");
 if (savedVolume !== null) volumeEl.value = savedVolume;

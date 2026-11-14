@@ -305,6 +305,34 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 410)
         self.assertEqual(data["error"], "search_expired")
 
+    def test_request_history_and_requeue(self):
+        status, first = self.request(
+            "POST",
+            "/api/request",
+            {"query": "History Song", "nickname": "Tester", "ts": now_ms()},
+        )
+        self.assertEqual(status, 201, first)
+        track_id = first["track"]["id"]
+
+        _, state = self.request("GET", "/api/state")
+        self.assertTrue(
+            any(item["track_id"] == track_id for item in state["history"])
+        )
+
+        self.app.db.clear_pending()
+        self.app.player.skip("test")
+        status, second = self.request(
+            "POST",
+            "/api/request",
+            {"track_id": track_id, "nickname": "Tester", "ts": now_ms()},
+        )
+        self.assertEqual(status, 201, second)
+        self.assertEqual(second["track"]["id"], track_id)
+
+        _, state = self.request("GET", "/api/state")
+        matching = [item for item in state["history"] if item["track_id"] == track_id]
+        self.assertEqual(len(matching), 2)
+
     def test_messages_are_separate_from_requests(self):
         status, data = self.request(
             "POST",

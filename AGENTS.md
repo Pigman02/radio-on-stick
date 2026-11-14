@@ -44,7 +44,7 @@ data/           运行时数据（gitignored）
 - `app/player.py`：播放头、队列、轮转、投票后的切歌、后台音频解析。
 - `app/httpd.py`：HTTP API、静态文件、管理接口、背景/歌词限频。
 - `app/sources/aggregate.py`：跨源搜索、候选缓存、元数据/音频/封面/歌词聚合。
-- `app/static/app.js`：轮询 `/now.json`、直连播放、下一首预载、本地歌词对齐、留言/投票/置顶。
+- `app/static/app.js`：轮询 `/now.json`、直连播放、下一首预载、本地歌词对齐、播放列表/点歌历史切换、留言/投票/置顶。
 - `app/static/admin.js`：`/admin` 独立管理页。
 - `deploy/nginx-radio.conf`：TLS、反向代理、限流、私网访问控制。
 

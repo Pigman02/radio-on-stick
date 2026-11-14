@@ -9,6 +9,7 @@
 - 播放列表顺序播放，队列优先，播完即停，不循环
 - `/now.json` 伪同步：封面、时长、进度、歌词
 - 点歌与留言分离；点歌为搜索 → 选择 → 确认
+- 点歌历史按 IP 保存；播放列表/历史记录可切换，历史曲目可重新点歌
 - 昵称保存在浏览器 localStorage
 - 一起听人数、50% 切歌投票、队列置顶
 - 留言区为直播评论样式，底部通栏、从下往上滚动、可折叠
@@ -70,12 +71,12 @@ RADIO_IP_SALT=随机字符串
 |---|---|---|
 | GET | `/now.json` | 当前曲目、进度、音频、下一首、队列、投票 |
 | GET | `/api/config` | 页面文字、背景、轮换间隔 |
-| GET | `/api/state` | 状态 + 队列 + 留言 |
+| GET | `/api/state` | 状态 + 队列 + 留言 + 点歌历史 |
 | GET | `/api/search?q=` | 搜索候选 |
 | GET | `/api/lyrics/<track_id>` | 歌词与翻译 |
 | GET | `/api/messages` | 最近留言 |
 | POST | `/api/messages` | 发送留言 |
-| POST | `/api/request` | 点歌（`candidate_id` 或 `query`） |
+| POST | `/api/request` | 点歌（`candidate_id`、`query` 或历史 `track_id`） |
 | POST | `/api/vote-skip` | 投票切歌 |
 | POST | `/api/queue/pin` | 队列置顶 |
 | POST | `/api/report` | `ended` / `error` / `stalled` 上报 |
