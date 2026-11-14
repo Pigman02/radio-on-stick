@@ -181,6 +181,7 @@ radio-on-stick/
 ├─ app/
 │  ├─ __main__.py        # 入口
 │  ├─ app.py             # 依赖装配
+│  ├─ community.py       # 听众计数与投票
 │  ├─ config.py          # 环境变量配置
 │  ├─ db.py              # SQLite schema 与访问层
 │  ├─ httpd.py           # HTTP 路由/API/静态文件/背景
@@ -190,9 +191,12 @@ radio-on-stick/
 │  ├─ upstream.py        # urllib 客户端
 │  ├─ sources/           # 网易 / QQ / meting / 聚合
 │  └─ static/            # 主页面 + /admin 独立管理页
+├─ deploy/               # Nginx、systemd、安装与打包
+├─ docs/TODO.md          # 路线图
 ├─ tests/                # unittest + 真实响应夹具
 ├─ tools/radioctl.py     # 管理 CLI
-└─ data/                 # SQLite、背景图（gitignore）
+├─ .github/workflows/    # GitHub Actions 测试
+└─ data/                 # 运行时数据，已 gitignore
 ```
 
 ## 测试

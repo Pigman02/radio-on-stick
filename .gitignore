@@ -1,14 +1,67 @@
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
+.eggs/
 .venv/
+venv/
+env/
+.python-version
+
+# Tests and linters
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local secrets and configuration
 .env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# Runtime data
 data/*
 !data/.gitkeep
 *.db
-*.db-wal
-*.db-shm
-.pytest_cache/
+*.db-*
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Logs
+*.log
+logs/
+
+# Audio files must never be committed
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.ogg
+*.wav
+
+# Build and release artifacts
 dist/
+build/
+*.tar.gz
+*.zip
+*.7z
+*.pid
+
+# OS and editors
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+*.rej
