@@ -315,9 +315,9 @@ class ApiTests(unittest.TestCase):
         track_id = first["track"]["id"]
 
         _, state = self.request("GET", "/api/state")
-        self.assertTrue(
-            any(item["track_id"] == track_id for item in state["history"])
-        )
+        matching = [item for item in state["history"] if item["track_id"] == track_id]
+        self.assertEqual(len(matching), 1)
+        first_created = matching[0]["created_at"]
 
         self.app.db.clear_pending()
         self.app.player.skip("test")
@@ -331,7 +331,8 @@ class ApiTests(unittest.TestCase):
 
         _, state = self.request("GET", "/api/state")
         matching = [item for item in state["history"] if item["track_id"] == track_id]
-        self.assertEqual(len(matching), 2)
+        self.assertEqual(len(matching), 1)
+        self.assertGreaterEqual(matching[0]["created_at"], first_created)
 
     def test_messages_are_separate_from_requests(self):
         status, data = self.request(
