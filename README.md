@@ -42,54 +42,14 @@ python tools/radioctl.py now
 
 ## 配置
 
-页面文字、背景和轮换间隔可在 `/admin` 覆盖。
+配置通过环境变量。最少设置：
 
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `RADIO_HOST` | `127.0.0.1` | Python 监听地址 |
-| `RADIO_PORT` | `8080` | Python 端口 |
-| `RADIO_DATA_DIR` | `项目目录/data` | 数据目录 |
-| `RADIO_DB_PATH` | `项目目录/data/radio.db` | SQLite 路径 |
-| `RADIO_STATION_NAME` | `我的电台` | 默认电台名 |
-| `RADIO_STATION_SUBTITLE` | `分享一首歌，留一句话` | 默认副标题 |
-| `RADIO_PAGE_TITLE` | 空 | 页面标题，空则用电台名 |
-| `RADIO_NOTICE` | 空 | 公告 |
-| `RADIO_ADMIN_TOKEN` | 空 | 管理 token；为空时管理接口禁用 |
-| `RADIO_IP_SALT` | 开发默认值 | IP 哈希盐，生产必须修改 |
-| `RADIO_REQUEST_PER_MIN` | `5` | 每 IP 每分钟点歌上限 |
-| `RADIO_MESSAGE_PER_MIN` | `10` | 每 IP 每分钟留言上限 |
-| `RADIO_QUEUE_MAX` | `20` | 全局待播上限 |
-| `RADIO_DUPLICATE_WINDOW` | `1800` | 同曲去重秒数 |
-| `RADIO_MESSAGE_MAX` | `200` | 留言最大长度 |
-| `RADIO_NICK_MAX` | `16` | 昵称最大长度 |
-| `RADIO_MIN_FORM_MS` | `1200` | 表单最短填写时间 |
-| `RADIO_REPORT_PER_MIN` | `10` | 每 IP 每分钟上报上限 |
-| `RADIO_SEARCH_PER_MIN` | `20` | 每 IP 每分钟搜索/解析上限 |
-| `RADIO_SEARCH_LIMIT` | `5` | 每个音源取条数 |
-| `RADIO_SEARCH_RESULTS` | `12` | 合并结果上限 |
-| `RADIO_SEARCH_CACHE_TTL` | `900` | 候选缓存秒数 |
-| `RADIO_LYRICS_PER_MIN` | `30` | 每 IP 每分钟歌词请求 |
-| `RADIO_LYRICS_RETRY` | `600` | 无歌词负缓存秒数 |
-| `RADIO_PIN_PER_MIN` | `10` | 每 IP 每分钟置顶次数 |
-| `RADIO_LISTENER_TTL` | `30` | 在线听众判定窗口 |
-| `RADIO_BG_INTERVAL` | `300` | 背景轮换秒数 |
-| `RADIO_BG_MAX_BYTES` | `8388608` | 背景最大字节数 |
-| `RADIO_BANNED_WORDS` | 空 | 逗号分隔屏蔽词 |
-| `RADIO_DEFAULT_DURATION_MS` | `240000` | 无时长时默认值 |
-| `RADIO_ESTIMATED_ENDED_MIN` | `60` | 估算时长曲目接受 ended 的最短秒数 |
-| `RADIO_UPSTREAM_TIMEOUT` | `8` | 上游超时秒数 |
-| `RADIO_UPSTREAM_RETRIES` | `2` | 上游重试次数 |
-| `RADIO_POLL_INTERVAL` | `0.5` | 播放调度间隔秒数 |
-| `RADIO_STATIC_DIR` | `app/static` | 静态目录 |
-| `RADIO_STATIC_CACHE` | `3600` | 静态缓存秒数 |
-| `RADIO_MAX_BODY_BYTES` | `16384` | JSON 请求体上限 |
-| `RADIO_NETEASE_SEARCH_URL` | `https://music.163.com/api/search/get/web` | 网易搜索 |
-| `RADIO_NETEASE_LYRIC_URL` | `https://music.163.com/api/song/lyric` | 网易歌词 |
-| `RADIO_QQ_SEARCH_URL` | `https://music.txqq.pro/` | TXQQ 搜索 |
-| `RADIO_METING_BASE_URL` | `https://api.qijieya.cn/meting/` | meting 接口 |
-| `RADIO_LOG_LEVEL` | `INFO` | 日志级别 |
+```bash
+RADIO_ADMIN_TOKEN=你的管理token
+RADIO_IP_SALT=随机字符串
+```
 
-点歌/留言使用 60 秒滑动窗口：每分钟第 6 首点歌、第 11 条留言才会被限制。
+页面文字、背景和轮换间隔可在 `/admin` 覆盖。完整示例见 `deploy/radio.env.example`，默认值见 `app/config.py`。
 
 ## 行为与音源
 
