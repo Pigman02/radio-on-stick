@@ -93,6 +93,25 @@ install -m 0644 "${SCRIPT_DIR}/radio-on-stick.service" "/etc/systemd/system/${SE
 systemctl daemon-reload
 
 echo "==> 安装 Nginx 站点"
+ALLOW_SNIPPET="/etc/nginx/snippets/radio-allow.conf"
+install -d -m 0755 /etc/nginx/snippets
+if [[ -f "${ALLOW_SNIPPET}" ]]; then
+  echo "保留现有访问规则：${ALLOW_SNIPPET}"
+else
+  OLD_SITE="/etc/nginx/sites-available/${SITE}"
+  if [[ -f "${OLD_SITE}" ]]; then
+    grep -E '^[[:space:]]*(allow|deny)[[:space:]]' "${OLD_SITE}" \
+      | sed 's/^[[:space:]]*//' >"${ALLOW_SNIPPET}" || true
+  fi
+  if [[ ! -s "${ALLOW_SNIPPET}" ]]; then
+    install -m 0644 "${SCRIPT_DIR}/nginx-radio-allow.conf" "${ALLOW_SNIPPET}"
+    echo "已写入默认访问规则：${ALLOW_SNIPPET}"
+  else
+    chmod 0644 "${ALLOW_SNIPPET}"
+    echo "已保留旧站点的访问规则：${ALLOW_SNIPPET}"
+  fi
+fi
+
 install -m 0644 "${SCRIPT_DIR}/nginx-radio.conf" "/etc/nginx/sites-available/${SITE}"
 ln -sfn "/etc/nginx/sites-available/${SITE}" "/etc/nginx/sites-enabled/${SITE}"
 rm -f /etc/nginx/sites-enabled/default

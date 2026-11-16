@@ -16,6 +16,7 @@
 - `/admin` 独立管理页：切歌、暂停/恢复、进度、队列、页面文字、背景上传与轮换
 - 背景随机轮换，支持本地图片和网络图床 URL
 - 客户端提前预载下一首；歌词跟随本地播放进度，不再强行对齐服务器
+- 移动端后台降低轮询与渲染频率；Media Session 支持系统状态栏/锁屏显示歌曲
 - Nginx 提供 HTTP/HTTPS（自签名证书，可替换）
 
 ## 快速开始
@@ -131,6 +132,7 @@ sudo bash deploy/install.sh
 - HTTP：`http://<设备IP>/`
 - HTTPS：`https://<设备IP>/`（自签名，首次需手动信任）
 - 替换 `/etc/radio-on-stick/tls/fullchain.pem` 和 `privkey.pem` 后执行 `sudo systemctl reload nginx` 即可换成正式证书。
+- 访问白名单在 `/etc/nginx/snippets/radio-allow.conf`，升级时会保留该文件，不会被安装脚本覆盖。
 
 ## 说明
 

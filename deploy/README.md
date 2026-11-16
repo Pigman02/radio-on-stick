@@ -97,6 +97,7 @@ PY
 ## 安全提醒
 
 - HTTPS 默认使用自签名证书；浏览器会提示，信任后可加密管理 token。
+- 访问白名单在 `/etc/nginx/snippets/radio-allow.conf`；升级安装脚本会保留该文件。
 - 换成正式证书：替换 `/etc/radio-on-stick/tls/fullchain.pem` 和 `privkey.pem`，执行 `sudo nginx -t && sudo systemctl reload nginx`。
 - 不要把 `privkey.pem` 提交到 git。
 - Nginx 已覆盖 `X-Real-IP`，不要让 Python 端口暴露到局域网。
