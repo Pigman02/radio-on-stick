@@ -813,6 +813,8 @@ input[type="range"]::-moz-range-thumb {
   grid-area: playlist;
   display: flex;
   flex-direction: column;
+  height: clamp(480px, calc(100vh - 180px), 760px);
+  max-height: calc(100vh - 140px);
   min-height: 0;
   align-self: stretch;
   overflow: hidden;
@@ -892,6 +894,7 @@ input[type="range"]::-moz-range-thumb {
   gap: 5px;
   margin-top: 10px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 4px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
@@ -1401,6 +1404,7 @@ input[type="range"]::-moz-range-thumb {
   flex-direction: column;
   gap: 1px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 4px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
@@ -1799,8 +1803,9 @@ input[type="file"] {
   }
 
   .playlist-card {
-    min-height: 420px;
-    max-height: 680px;
+    height: 520px;
+    min-height: 360px;
+    max-height: 70vh;
   }
 
   .messages-card {
