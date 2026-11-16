@@ -100,7 +100,8 @@ if [[ -f "${ALLOW_SNIPPET}" ]]; then
 else
   OLD_SITE="/etc/nginx/sites-available/${SITE}"
   if [[ -f "${OLD_SITE}" ]]; then
-    grep -E '^[[:space:]]*(allow|deny)[[:space:]]' "${OLD_SITE}" \
+    grep -E '^[[:space:]]*(allow|deny|include)[[:space:]]' "${OLD_SITE}" \
+      | grep -v 'snippets/radio-allow.conf' \
       | sed 's/^[[:space:]]*//' >"${ALLOW_SNIPPET}" || true
   fi
   if [[ ! -s "${ALLOW_SNIPPET}" ]]; then

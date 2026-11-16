@@ -45,7 +45,8 @@ data/           运行时数据（gitignored）
 - `app/httpd.py`：HTTP API、静态文件、管理接口、背景/歌词限频。
 - `app/sources/aggregate.py`：跨源搜索、候选缓存、元数据/音频/封面/歌词聚合。
 - `app/static/app.js`：轮询 `/now.json`、直连播放、下一首预载、本地歌词对齐、移动端后台降频、Media Session、播放列表/点歌历史切换、留言/投票/置顶。
-- 点歌历史按 `(IP, track_id)` 唯一，重复点歌只更新时间，不新增行。
+- 点歌历史由服务器全局维护，按 `track_id` 唯一；重复点歌只更新时间，不新增行。
+- 留言默认保留 200 条、页面显示 100 条，相关配置为 `message_keep_limit` / `message_display_limit`。
 - `app/static/admin.js`：`/admin` 独立管理页。
 - `deploy/nginx-radio.conf`：TLS、反向代理、限流、私网访问控制。
 

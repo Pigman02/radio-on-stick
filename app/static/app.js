@@ -1004,7 +1004,7 @@ function renderHistory(items) {
     return;
   }
 
-  for (const [index, item] of items.slice(0, 30).entries()) {
+  for (const [index, item] of items.entries()) {
     const row = document.createElement("div");
     row.className = "playlist-item history-item";
     row.dataset.historyId = String(item.id);
@@ -1067,7 +1067,7 @@ function renderMessages(items) {
   const previousScrollTop = messageList.scrollTop;
   const previousHeight = messageList.scrollHeight;
   const previousCount = state.lastMessageCount;
-  const ordered = items.slice(0, 10).reverse();
+  const ordered = items.slice().reverse();
   state.lastMessageCount = ordered.length;
 
   messageList.textContent = "";

@@ -42,6 +42,7 @@ def build_app(
     db = Database(config.db_path)
     db.cleanup_history()
     db.cleanup_old_data()
+    db.trim_messages(config.message_keep_limit)
     http = http or HttpClient(
         timeout=config.upstream_timeout,
         retries=config.upstream_retries,

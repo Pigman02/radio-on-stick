@@ -394,14 +394,23 @@ class RadioHandler(BaseHTTPRequestHandler):
                     "now": now,
                     "upcoming": self.app.player.upcoming(40),
                     "queue": self.app.db.list_queue(20),
-                    "messages": self.app.db.list_messages(20),
-                    "history": self.app.db.list_request_history(self._ip_key(), 30),
+                    "messages": self.app.db.list_messages(
+                        self.app.config.message_display_limit
+                    ),
+                    "history": self.app.db.list_request_history(100),
                     "listeners": now["listeners"],
                 },
             )
             return
         if path == "/api/messages":
-            self._send_json(200, {"messages": self.app.db.list_messages(20)})
+            self._send_json(
+                200,
+                {
+                    "messages": self.app.db.list_messages(
+                        self.app.config.message_display_limit
+                    )
+                },
+            )
             return
         if path == "/api/search":
             self._handle_search(parsed.query)
@@ -446,7 +455,9 @@ class RadioHandler(BaseHTTPRequestHandler):
                 {
                     "now": self.app.player.snapshot(),
                     "queue": self.app.db.list_queue(50),
-                    "messages": self.app.db.list_messages(50),
+                    "messages": self.app.db.list_messages(
+                        self.app.config.message_keep_limit
+                    ),
                     "settings": public_settings(
                         load_ui_settings(self.app.db, self.app.config)
                     ),
@@ -545,6 +556,7 @@ class RadioHandler(BaseHTTPRequestHandler):
             raise ApiError(429, decision.reason, reason, retry_after=decision.retry_after)
         created_at = now_ms()
         message_id = self.app.db.insert_message(ip_key, nickname, body, None, created_at)
+        self.app.db.trim_messages(self.app.config.message_keep_limit)
         logger.info("message %s by %s", message_id, nickname)
         self._send_json(
             201,
