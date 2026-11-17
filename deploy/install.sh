@@ -28,7 +28,8 @@ PY
 
 echo "==> 安装系统依赖（不会升级全系统）"
 apt-get update
-apt-get install -y --no-install-recommends nginx python3 openssl
+apt-get install -y --no-install-recommends nginx python3 openssl ffmpeg
+python3 "${SCRIPT_DIR}/ensure_ffmpeg.py" --install --quiet
 
 echo "==> 创建运行用户和目录"
 if ! id radio >/dev/null 2>&1; then
@@ -56,7 +57,7 @@ else
 RADIO_HOST=127.0.0.1
 RADIO_PORT=8080
 RADIO_DATA_DIR=${DATA_DIR}
-RADIO_STATION_NAME=我的电台
+RADIO_STATION_NAME=猫娘电台
 RADIO_LOG_LEVEL=INFO
 RADIO_ADMIN_TOKEN=${TOKEN}
 RADIO_IP_SALT=${SALT}
@@ -93,6 +94,11 @@ install -m 0644 "${SCRIPT_DIR}/radio-on-stick.service" "/etc/systemd/system/${SE
 systemctl daemon-reload
 
 echo "==> 安装 Nginx 站点"
+install -d -m 0755 /etc/nginx/snippets
+# The allow-list is intentionally preserved across upgrades.
+if [[ ! -f /etc/nginx/snippets/radio-allow.conf ]]; then
+  install -m 0644 "${SCRIPT_DIR}/nginx-radio-allow.conf" /etc/nginx/snippets/radio-allow.conf
+fi
 install -m 0644 "${SCRIPT_DIR}/nginx-radio.conf" "/etc/nginx/sites-available/${SITE}"
 ln -sfn "/etc/nginx/sites-available/${SITE}" "/etc/nginx/sites-enabled/${SITE}"
 rm -f /etc/nginx/sites-enabled/default

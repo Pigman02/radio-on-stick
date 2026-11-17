@@ -14,6 +14,7 @@ from typing import Any
 
 from ..config import Config
 from ..db import Database, now_ms
+from .bilibili import BilibiliError, BilibiliSource, is_bilibili_url
 from .meting import MetingSource
 from .netease import NeteaseSource
 from .qq import QQSource
@@ -70,6 +71,7 @@ class TrackAggregator:
         self.netease = netease
         self.qq = qq
         self.meting = meting
+        self.bilibili = BilibiliSource(config)
         self.search_sources = [netease, qq]
         self._candidate_lock = threading.Lock()
         self._candidates: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -241,6 +243,7 @@ class TrackAggregator:
                     {
                         "candidate_id": candidate_id,
                         "source": item.get("source"),
+                        "source_id": str(item.get("source_id") or ""),
                         "source_label": item.get("source_label"),
                         "title": item.get("title") or "",
                         "artist": item.get("artist") or "",
@@ -251,6 +254,31 @@ class TrackAggregator:
                     }
                 )
         return results
+
+    def remember_candidate(self, item: dict[str, Any]) -> dict[str, Any]:
+        now = time.time()
+        ttl = max(60, self.config.search_cache_ttl_sec)
+        with self._candidate_lock:
+            self._cleanup_candidates(now)
+            candidate_id = uuid.uuid4().hex
+            self._candidates[candidate_id] = (now + ttl, dict(item))
+        duration_ms = item.get("duration_ms")
+        return {
+            "candidate_id": candidate_id,
+            "source": item.get("source"),
+            "source_id": str(item.get("source_id") or ""),
+            "source_label": self.bilibili.display_name,
+            "title": item.get("title") or "",
+            "artist": item.get("artist") or "",
+            "album": item.get("album") or "",
+            "duration_ms": int(duration_ms) if duration_ms else None,
+            "duration_estimated": not bool(duration_ms),
+            "cover_url": item.get("cover_url") or "",
+        }
+
+    def search_url(self, value: str) -> list[dict[str, Any]]:
+        item = self.bilibili.resolve_url(value)
+        return [self.remember_candidate(item)]
 
     def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
         now = time.time()
@@ -269,6 +297,9 @@ class TrackAggregator:
         query = " ".join(str(query or "").split())
         if not query:
             return None
+        if is_bilibili_url(query):
+            item = self.bilibili.resolve_url(query)
+            return self._build_track(None, None, query, fallback=item, prefer_source="bilibili")
         by_source = self._search_all(query)
         netease_items = by_source.get(self._source_name(self.netease), [])
         qq_items = by_source.get(self._source_name(self.qq), [])
@@ -301,6 +332,14 @@ class TrackAggregator:
         qq_best = None
         fallback = None
 
+        if source == "bilibili":
+            return self._build_track(
+                None,
+                None,
+                query,
+                fallback=candidate,
+                prefer_source="bilibili",
+            )
         if source == "netease":
             netease_best = candidate
             qq_best = self._best_pair(
@@ -440,6 +479,7 @@ class TrackAggregator:
                 "netease_id": netease_id,
                 "qq_id": qq_id,
                 "qq_audio_url": qq_url,
+                "source_url": (fallback or {}).get("webpage_url") or "",
             },
             "enabled": True,
             "created_at": now_ms(),
@@ -491,6 +531,30 @@ class TrackAggregator:
             url = self.qq.refresh_audio(str(track["title"]), str(qq_id))
         return url
 
+    def lookup_lyrics(self, title: str, artist: str) -> tuple[str, str]:
+        """Best-effort online lyrics for an uploaded track without source IDs."""
+        keyword = f"{title} {artist}".strip()
+        if not keyword:
+            return "", ""
+        try:
+            for item in self.netease.search(keyword, limit=3):
+                song_id = str(item.get("source_id") or "")
+                if not song_id:
+                    continue
+                lrc, translation = self.netease.lyrics(song_id)
+                if lrc:
+                    return lrc, translation
+        except Exception:
+            pass
+        try:
+            for item in self.qq.search(keyword, limit=3):
+                lrc = str(item.get("lyrics_lrc") or "").strip()
+                if lrc:
+                    return lrc, ""
+        except Exception:
+            pass
+        return "", ""
+
     def ensure_lyrics(self, track: dict[str, Any]) -> tuple[str, str]:
         existing_lrc = str(track.get("lyrics_lrc") or "").strip()
         existing_translation = str(track.get("lyrics_translation") or "").strip()
@@ -535,6 +599,24 @@ class TrackAggregator:
 
     def refresh_audio(self, track: dict[str, Any], force: bool = False) -> dict[str, Any]:
         now = now_ms()
+        if track.get("source") == "bilibili":
+            meta = track.get("meta_json") or {}
+            page_url = str(meta.get("source_url") or "").strip()
+            if not page_url:
+                return track
+            item = self.bilibili.resolve_url(page_url)
+            updates = {
+                "audio_primary": item.get("audio_url") or track.get("audio_primary") or "",
+                "audio_alternates": [],
+                "audio_resolved_at": now,
+                "cover_url": item.get("cover_url") or track.get("cover_url") or "",
+                "title": item.get("title") or track.get("title") or "",
+                "artist": item.get("artist") or track.get("artist") or "",
+                "duration_ms": int(item.get("duration_ms") or track.get("duration_ms") or 0),
+                "meta_json": {**meta, "source_url": item.get("webpage_url") or page_url},
+            }
+            self.db.update_track(track["id"], updates)
+            return self.db.get_track(track["id"]) or track
         resolved_at = int(track.get("audio_resolved_at") or 0)
         recent = resolved_at > 0 and now - resolved_at < 10 * 60 * 1000
         refreshed_qq = False

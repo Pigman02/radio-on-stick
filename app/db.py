@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS request_history (
 );
 CREATE INDEX IF NOT EXISTS idx_request_history_ip
     ON request_history(ip_key, created_at);
+CREATE INDEX IF NOT EXISTS idx_request_history_created
+    ON request_history(created_at);
 
 CREATE TABLE IF NOT EXISTS plays (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,6 +295,20 @@ class Database:
         )
         return self._row_to_track(row)
 
+    def find_track_by_title_artist(
+        self, title: str, artist: str
+    ) -> dict[str, Any] | None:
+        title = str(title or "").strip()
+        artist = str(artist or "").strip()
+        if not title:
+            return None
+        row = self._fetchone(
+            "SELECT * FROM tracks WHERE lower(trim(title)) = lower(trim(?)) "
+            "AND lower(trim(artist)) = lower(trim(?)) LIMIT 1",
+            (title, artist),
+        )
+        return self._row_to_track(row)
+
     def find_track_by_ids(
         self, netease_id: str | None, qq_id: str | None
     ) -> dict[str, Any] | None:
@@ -323,6 +339,51 @@ class Database:
 
     def delete_track(self, track_id: str) -> None:
         self._execute("DELETE FROM tracks WHERE id = ?", (track_id,))
+
+    def list_all_tracks(self, limit: int = 500) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            "SELECT * FROM tracks ORDER BY created_at DESC, id LIMIT ?",
+            (max(1, min(2000, int(limit))),),
+        )
+        return [track for row in rows if (track := self._row_to_track(row)) is not None]
+
+    def delete_track_admin(self, track_id: str) -> dict[str, Any] | None:
+        """Delete any track and its dependent queue/history rows atomically."""
+        with self._lock:
+            try:
+                row = self._conn.execute(
+                    "SELECT * FROM tracks WHERE id = ?", (track_id,)
+                ).fetchone()
+                if row is None:
+                    return None
+                track = self._row_to_track(row)
+                queue_ids = [
+                    int(item["id"])
+                    for item in self._conn.execute(
+                        "SELECT id FROM queue WHERE track_id = ?", (track_id,)
+                    ).fetchall()
+                ]
+                if queue_ids:
+                    placeholders = ",".join("?" for _ in queue_ids)
+                    self._conn.execute(
+                        f"DELETE FROM queue_pins WHERE queue_id IN ({placeholders})",
+                        queue_ids,
+                    )
+                self._conn.execute(
+                    "DELETE FROM queue WHERE track_id = ?", (track_id,)
+                )
+                self._conn.execute(
+                    "DELETE FROM request_history WHERE track_id = ?", (track_id,)
+                )
+                self._conn.execute(
+                    "DELETE FROM plays WHERE track_id = ?", (track_id,)
+                )
+                self._conn.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
+                self._conn.commit()
+                return track
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def enqueue(
         self,
@@ -400,6 +461,65 @@ class Database:
             (limit,),
         )
         return [dict(row) for row in rows]
+
+    def list_queue_for(
+        self, requester_key: str | None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Queue rows for the user-facing list, with an ownership flag.
+
+        The hashed requester key is intentionally not returned to the browser;
+        it is only used to compute can_cancel.
+        """
+        rows = self._fetchall(
+            "SELECT q.id, q.track_id, q.requester_key, q.nickname, q.message, "
+            "q.status, q.priority, q.created_at, q.started_at, q.ended_at, "
+            "t.title, t.artist, t.album, t.duration_ms, t.cover_url, t.source "
+            "FROM queue q JOIN tracks t ON t.id = q.track_id "
+            "WHERE q.status IN ('pending', 'playing') "
+            "ORDER BY q.priority DESC, q.id ASC LIMIT ?",
+            (limit,),
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            owner = str(item.pop("requester_key", "") or "")
+            item["can_cancel"] = bool(
+                requester_key and owner == requester_key and item["status"] == "pending"
+            )
+            item["pinned_by_me"] = False
+            if requester_key:
+                pinned = self._fetchone(
+                    "SELECT 1 FROM queue_pins WHERE queue_id = ? AND voter_key = ? LIMIT 1",
+                    (int(item["id"]), requester_key),
+                )
+                item["pinned_by_me"] = pinned is not None
+            result.append(item)
+        return result
+
+    def cancel_pending(self, queue_id: int, requester_key: str) -> bool:
+        """Remove only the caller's own pending request."""
+        with self._lock:
+            try:
+                row = self._conn.execute(
+                    "SELECT 1 FROM queue WHERE id = ? AND requester_key = ? "
+                    "AND status = 'pending' LIMIT 1",
+                    (int(queue_id), requester_key),
+                ).fetchone()
+                if row is None:
+                    return False
+                self._conn.execute(
+                    "DELETE FROM queue_pins WHERE queue_id = ?", (int(queue_id),)
+                )
+                cur = self._conn.execute(
+                    "DELETE FROM queue WHERE id = ? AND requester_key = ? "
+                    "AND status = 'pending'",
+                    (int(queue_id), requester_key),
+                )
+                self._conn.commit()
+                return bool(cur.rowcount)
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def clear_pending(self) -> int:
         with self._lock:
@@ -496,6 +616,49 @@ class Database:
                 "pinned": pinned,
             }
 
+    def toggle_queue_pin(
+        self, queue_id: int, voter_key: str, created_at: int | None = None
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, priority FROM queue WHERE id = ? AND status = 'pending'",
+                (int(queue_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            existing = self._conn.execute(
+                "SELECT 1 FROM queue_pins WHERE queue_id = ? AND voter_key = ? LIMIT 1",
+                (int(queue_id), voter_key),
+            ).fetchone()
+            if existing is not None:
+                self._conn.execute(
+                    "DELETE FROM queue_pins WHERE queue_id = ? AND voter_key = ?",
+                    (int(queue_id), voter_key),
+                )
+                self._conn.execute(
+                    "UPDATE queue SET priority = MAX(0, priority - 1) WHERE id = ?",
+                    (int(queue_id),),
+                )
+                pinned = False
+            else:
+                self._conn.execute(
+                    "INSERT INTO queue_pins(queue_id, voter_key, created_at) VALUES(?, ?, ?)",
+                    (int(queue_id), voter_key, int(created_at or now_ms())),
+                )
+                self._conn.execute(
+                    "UPDATE queue SET priority = priority + 1 WHERE id = ?",
+                    (int(queue_id),),
+                )
+                pinned = True
+            self._conn.commit()
+            priority = self._conn.execute(
+                "SELECT priority FROM queue WHERE id = ?", (int(queue_id),)
+            ).fetchone()
+            return {
+                "pins": int(priority["priority"]) if priority else 0,
+                "pinned": pinned,
+            }
+
     def insert_message(
         self,
         ip_key: str | None,
@@ -551,6 +714,18 @@ class Database:
         )
         return [dict(row) for row in rows]
 
+    def list_recent_request_history(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Shared request history: every listener sees the same recent rows."""
+        rows = self._fetchall(
+            "SELECT h.id, h.track_id, h.nickname, h.created_at, "
+            "t.title, t.artist, t.album, t.duration_ms, t.cover_url, t.source, "
+            "t.duration_estimated "
+            "FROM request_history h JOIN tracks t ON t.id = h.track_id "
+            "ORDER BY h.created_at DESC, h.id DESC LIMIT ?",
+            (max(1, int(limit)),),
+        )
+        return [dict(row) for row in rows]
+
     def add_rate_event(self, key: str, action: str, ts: int) -> None:
         self._execute(
             "INSERT INTO rate_events(key, action, ts) VALUES(?, ?, ?)",
@@ -567,6 +742,88 @@ class Database:
 
     def cleanup_rate_events(self, before_ms: int) -> None:
         self._execute("DELETE FROM rate_events WHERE ts < ?", (int(before_ms),))
+
+    # ------------------------------------------------------------------
+    # Temporary uploaded audio lifecycle
+    # ------------------------------------------------------------------
+
+    def list_upload_tracks(self) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            "SELECT * FROM tracks WHERE source = 'upload' ORDER BY created_at, id"
+        )
+        return [track for row in rows if (track := self._row_to_track(row)) is not None]
+
+    def upload_track_has_active_queue(self, track_id: str) -> bool:
+        row = self._fetchone(
+            "SELECT 1 FROM queue WHERE track_id = ? "
+            "AND status IN ('pending', 'playing') LIMIT 1",
+            (track_id,),
+        )
+        return row is not None
+
+    def upload_track_is_playing(self, track_id: str) -> bool:
+        row = self._fetchone(
+            "SELECT 1 FROM queue WHERE track_id = ? AND status = 'playing' LIMIT 1",
+            (track_id,),
+        )
+        return row is not None
+
+    def upload_last_ended_at(self, track_id: str) -> int | None:
+        row = self._fetchone(
+            "SELECT MAX(ended_at) AS ended_at FROM plays WHERE track_id = ?",
+            (track_id,),
+        )
+        if row is None or row["ended_at"] is None:
+            return None
+        return int(row["ended_at"])
+
+    def delete_upload_track(self, track_id: str, *, allow_pending: bool = False) -> bool:
+        """Delete an expired uploaded track and its user-facing history.
+
+        A playing track is never removed.  A pending track is protected unless
+        the hard retention deadline explicitly allows it (the caller then also
+        removes its queue row).  This is intentionally a single transaction so
+        a half-deleted row cannot be returned by the API.
+        """
+        with self._lock:
+            try:
+                playing = self._conn.execute(
+                    "SELECT 1 FROM queue WHERE track_id = ? "
+                    "AND status = 'playing' LIMIT 1",
+                    (track_id,),
+                ).fetchone()
+                if playing is not None:
+                    return False
+                pending = self._conn.execute(
+                    "SELECT 1 FROM queue WHERE track_id = ? "
+                    "AND status = 'pending' LIMIT 1",
+                    (track_id,),
+                ).fetchone()
+                if pending is not None and not allow_pending:
+                    return False
+                self._conn.execute(
+                    "DELETE FROM queue_pins WHERE queue_id IN "
+                    "(SELECT id FROM queue WHERE track_id = ?)",
+                    (track_id,),
+                )
+                self._conn.execute(
+                    "DELETE FROM queue WHERE track_id = ?", (track_id,)
+                )
+                self._conn.execute(
+                    "DELETE FROM request_history WHERE track_id = ?", (track_id,)
+                )
+                self._conn.execute(
+                    "DELETE FROM plays WHERE track_id = ?", (track_id,)
+                )
+                cur = self._conn.execute(
+                    "DELETE FROM tracks WHERE id = ? AND source = 'upload'",
+                    (track_id,),
+                )
+                self._conn.commit()
+                return bool(cur.rowcount)
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def start_play(self, track_id: str, queue_id: int | None, started_at: int) -> int:
         cur = self._execute(

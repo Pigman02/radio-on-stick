@@ -1,645 +1,789 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
+(() => {
+  if (window.__radioAdminLoaded) return;
+  window.__radioAdminLoaded = true;
 
-const adminStatus = $("adminStatus");
-const loginCard = $("loginCard");
-const adminToken = $("adminToken");
-const adminLoginBtn = $("adminLoginBtn");
-const adminLoginStatus = $("adminLoginStatus");
-const adminPanel = $("adminPanel");
-const adminNow = $("adminNow");
-const adminQueue = $("adminQueue");
-const adminMessages = $("adminMessages");
-const adminToggle = $("adminToggle");
-const adminSkip = $("adminSkip");
-const adminClearQueue = $("adminClearQueue");
-const adminPosition = $("adminPosition");
-const adminDuration = $("adminDuration");
-const adminProgressFill = $("adminProgressFill");
-const adminSearchForm = $("adminSearchForm");
-const adminSearchInput = $("adminSearchInput");
-const adminSearchStatus = $("adminSearchStatus");
-const adminSearchResults = $("adminSearchResults");
-const setStationName = $("setStationName");
-const setSubtitle = $("setSubtitle");
-const setPageTitle = $("setPageTitle");
-const setNotice = $("setNotice");
-const setBgInterval = $("setBgInterval");
-const saveSettings = $("saveSettings");
-const settingsStatus = $("settingsStatus");
-const bgFile = $("bgFile");
-const bgUpload = $("bgUpload");
-const bgStatus = $("bgStatus");
-const bgUrl = $("bgUrl");
-const bgUrlAdd = $("bgUrlAdd");
-const bgGallery = $("bgGallery");
-const adminLogout = $("adminLogout");
+  const $ = (id) => document.getElementById(id);
+  const K_TOKEN = "radio.adminToken";
+  const state = {
+    token: "",
+    data: null,
+    tab: "tracks",
+    busy: false,
+    timer: null,
+    dirty: false,
+  };
 
-const state = {
-  token: "",
-  busy: false,
-  tab: "control",
-  now: null,
-  nowFetchedAt: 0,
-  clockOffset: 0,
-  pollTimer: null,
-};
+  const el = (tag, className = "", text = "") => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text) node.textContent = text;
+    return node;
+  };
 
-function sessionGet(key) {
-  try {
-    return sessionStorage.getItem(key);
-  } catch (_) {
-    return null;
-  }
-}
+  const icon = (paths) => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "icon stroke-icon");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    for (const d of paths) {
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", d);
+      svg.appendChild(path);
+    }
+    return svg;
+  };
 
-function sessionSet(key, value) {
-  try {
-    if (value === null) sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, value);
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-async function fetchJSON(url, options = {}) {
-  const { timeout = 15000, ...init } = options;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { cache: "no-store", ...init, signal: controller.signal });
-    let data = null;
+  const sessionGet = (key) => {
+    try { return sessionStorage.getItem(key); } catch (_) { return null; }
+  };
+  const sessionSet = (key, value) => {
     try {
-      data = await response.json();
-    } catch (_) {
-      data = null;
+      if (value === null) sessionStorage.removeItem(key);
+      else sessionStorage.setItem(key, value);
+    } catch (_) { /* ignore */ }
+  };
+
+  async function api(path, options = {}) {
+    const { timeout = 20_000, ...init } = options;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(path, {
+        cache: "no-store",
+        ...init,
+        headers: { ...(init.headers || {}), Authorization: `Bearer ${state.token}` },
+        signal: controller.signal,
+      });
+      let data = {};
+      try { data = await response.json(); } catch (_) { data = {}; }
+      if (!response.ok) {
+        const error = new Error(data.message || `HTTP ${response.status}`);
+        error.status = response.status;
+        error.data = data;
+        throw error;
+      }
+      return data;
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok) {
-      const error = new Error((data && data.message) || `HTTP ${response.status}`);
-      error.status = response.status;
-      error.data = data;
-      throw error;
-    }
-    return data;
-  } finally {
-    clearTimeout(timer);
   }
-}
 
-function errorText(error, fallback = "操作失败") {
-  return (error && error.data && error.data.message) || (error && error.message) || fallback;
-}
+  const errorText = (error, fallback = "操作失败") =>
+    (error && error.data && error.data.message) || (error && error.message) || fallback;
 
-function fmtTime(ms, estimated = false) {
-  if (!Number.isFinite(ms) || ms < 0) return "--:--";
-  const total = Math.floor(ms / 1000);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  if (hours > 0) {
-    return `${estimated ? "~" : ""}${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  function setStatus(kind, text) {
+    const node = $("adminStatus");
+    if (!node) return;
+    node.dataset.state = kind;
+    node.textContent = text;
   }
-  return `${estimated ? "~" : ""}${minutes}:${String(seconds).padStart(2, "0")}`;
-}
 
-function fmtRelative(timestamp) {
-  if (!timestamp) return "";
-  const diff = Date.now() - timestamp;
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  const date = new Date(timestamp);
-  return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-function setStatus(kind, text) {
-  adminStatus.dataset.state = kind;
-  adminStatus.textContent = text;
-}
-
-function adminHeaders(extra = {}) {
-  return { ...extra, Authorization: `Bearer ${state.token}` };
-}
-
-async function adminFetch(path, options = {}) {
-  return fetchJSON(path, { ...options, headers: adminHeaders(options.headers || {}) });
-}
-
-async function adminJson(path, payload) {
-  return adminFetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {}),
-  });
-}
-
-function showLogin() {
-  loginCard.classList.remove("hidden");
-  adminPanel.classList.add("hidden");
-}
-
-function showPanel() {
-  loginCard.classList.add("hidden");
-  adminPanel.classList.remove("hidden");
-}
-
-function adminRow(titleText, subText, actionText, action, actionClass = "") {
-  const row = document.createElement("div");
-  row.className = "admin-row";
-  const copy = document.createElement("div");
-  copy.className = "admin-row-copy";
-  const titleEl = document.createElement("span");
-  titleEl.className = "admin-row-title";
-  titleEl.textContent = titleText;
-  const subEl = document.createElement("span");
-  subEl.className = "admin-row-sub";
-  subEl.textContent = subText;
-  copy.appendChild(titleEl);
-  copy.appendChild(subEl);
-  row.appendChild(copy);
-  if (actionText && action) {
-    const button = document.createElement("button");
+  /* ---------- topbar button ---------- */
+  function addTopbarButton() {
+    if ($("adminOpenBtn")) return;
+    const actions = document.querySelector(".top-actions");
+    if (!actions) return;
+    const button = el("button", "icon-btn admin-open-btn");
+    button.id = "adminOpenBtn";
     button.type = "button";
-    if (actionClass) button.className = actionClass;
-    button.textContent = actionText;
-    button.addEventListener("click", action);
-    row.appendChild(button);
+    button.setAttribute("aria-label", "管理控制台");
+    button.title = "管理控制台";
+    button.appendChild(icon([
+      "M12 3.5 19 6v5.1c0 4.1-2.6 7.7-7 9.4-4.4-1.7-7-5.3-7-9.4V6l7-2.5Z",
+      "m9 12 2 2 4-4",
+    ]));
+    button.addEventListener("click", () => openConsole(true));
+    actions.appendChild(button);
   }
-  return row;
-}
 
-function renderNow(now) {
-  state.now = now;
-  state.nowFetchedAt = performance.now();
-  state.clockOffset = Number(now.server_time_ms || Date.now()) - Date.now();
-  adminNow.textContent = "";
-  if (now.track) {
-    const strong = document.createElement("strong");
-    strong.textContent = `${now.track.title} / ${now.track.artist || "未知歌手"}`;
-    adminNow.appendChild(strong);
-    const status = document.createElement("span");
-    status.textContent = now.paused ? " · 已暂停" : " · 播放中";
-    adminNow.appendChild(status);
-    if (now.next) {
-      const next = document.createElement("div");
-      next.textContent = `下一首：${now.next.title} / ${now.next.artist || "未知歌手"}`;
-      adminNow.appendChild(next);
+  /* ---------- console shell ---------- */
+  function buildConsole() {
+    if ($("adminConsole")) return;
+    const overlay = el("div", "admin-console hidden");
+    overlay.id = "adminConsole";
+
+    const backdrop = el("div", "admin-console-backdrop");
+    backdrop.addEventListener("click", closeConsole);
+
+    const card = el("section", "admin-console-card");
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-modal", "true");
+    card.setAttribute("aria-labelledby", "adminConsoleTitle");
+
+    const head = el("header", "admin-console-head");
+    const heading = el("div", "admin-console-heading");
+    heading.appendChild(el("p", "kicker", "SERVER ADMIN"));
+    const title = el("h2", "", "管理控制台");
+    title.id = "adminConsoleTitle";
+    heading.appendChild(title);
+    head.appendChild(heading);
+    const headActions = el("div", "admin-console-head-actions");
+    const status = el("span", "sync-pill", "未登录");
+    status.id = "adminStatus";
+    status.dataset.state = "offline";
+    headActions.appendChild(status);
+    const close = el("button", "icon-btn");
+    close.type = "button";
+    close.setAttribute("aria-label", "关闭管理控制台");
+    close.title = "关闭";
+    close.appendChild(icon(["m6 6 12 12M18 6 6 18"]));
+    close.addEventListener("click", closeConsole);
+    headActions.appendChild(close);
+    head.appendChild(headActions);
+
+    const login = el("div", "admin-login-view");
+    login.id = "adminLoginView";
+    login.appendChild(el("p", "admin-copy", "输入服务端 RADIO_ADMIN_TOKEN 后管理电台。"));
+    const tokenInput = el("input", "admin-token-input");
+    tokenInput.id = "adminToken";
+    tokenInput.type = "password";
+    tokenInput.placeholder = "管理 token";
+    tokenInput.autocomplete = "current-password";
+    login.appendChild(tokenInput);
+    const loginRow = el("div", "admin-console-actions");
+    const loginButton = el("button", "primary-btn", "登录");
+    loginButton.id = "adminLoginBtn";
+    loginButton.type = "button";
+    loginRow.appendChild(loginButton);
+    login.appendChild(loginRow);
+    const loginStatus = el("p", "form-status");
+    loginStatus.id = "adminLoginStatus";
+    loginStatus.setAttribute("role", "status");
+    login.appendChild(loginStatus);
+
+    const panel = el("div", "admin-panel-view hidden");
+    panel.id = "adminPanelView";
+    const tabs = el("nav", "admin-console-tabs");
+    tabs.setAttribute("role", "tablist");
+    const tabDefs = [
+      ["tracks", "曲目库"],
+      ["policy", "准入与格式"],
+      ["page", "页面与背景"],
+      ["access", "访问与部署"],
+      ["messages", "留言"],
+    ];
+    for (const [key, label] of tabDefs) {
+      const button = el("button", "admin-console-tab", label);
+      button.type = "button";
+      button.dataset.tab = key;
+      button.setAttribute("role", "tab");
+      button.addEventListener("click", () => switchTab(key));
+      tabs.appendChild(button);
     }
-    adminToggle.disabled = false;
-    adminToggle.textContent = now.paused ? "恢复电台" : "暂停电台";
-  } else {
-    adminNow.textContent = "当前没有播放。添加曲目后会自动开始。";
-    adminToggle.disabled = true;
-    adminToggle.textContent = "暂停电台";
-  }
-  updateAdminProgress();
-}
+    panel.appendChild(tabs);
 
-function renderQueueAdmin(queue) {
-  adminQueue.textContent = "";
-  if (!queue.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "队列为空";
-    adminQueue.appendChild(empty);
-    return;
-  }
-  for (const item of queue) {
-    const sub = [item.artist || "未知歌手", item.status === "playing" ? "播放中" : "等待中"];
-    if (item.nickname) sub.push(`by ${item.nickname}`);
-    const pins = Number(item.priority) || 0;
-    if (item.status === "pending") {
-      adminQueue.appendChild(
-        adminRow(
-          item.title || "未知曲目",
-          sub.join(" · "),
-          pins > 0 ? `置顶 ${pins}` : "置顶",
-          async (event) => {
-            const button = event.currentTarget;
-            button.disabled = true;
-            try {
-              await adminJson("/api/queue/pin", { queue_id: item.id });
-              await loadState();
-              pollState();
-            } catch (error) {
-              adminSearchStatus.textContent = errorText(error, "置顶失败");
-              adminSearchStatus.dataset.tone = "error";
-              button.disabled = false;
-            }
-          },
-          "pin-btn"
-        )
-      );
-    } else {
-      adminQueue.appendChild(adminRow(item.title || "未知曲目", sub.join(" · "), "", null));
-    }
-  }
-}
+    const body = el("div", "admin-console-body");
+    body.id = "adminConsoleBody";
+    panel.appendChild(body);
 
-function renderMessagesAdmin(messages) {
-  adminMessages.textContent = "";
-  if (!messages.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "还没有留言";
-    adminMessages.appendChild(empty);
-    return;
-  }
-  for (const item of messages) {
-    adminMessages.appendChild(
-      adminRow(
-        item.nickname || "匿名",
-        `${item.body || ""}${item.created_at ? ` · ${fmtRelative(item.created_at)}` : ""}`,
-        "隐藏",
-        async () => {
-          await adminJson("/api/admin/hide-message", { id: item.id });
-          await loadState();
-        }
-      )
-    );
-  }
-}
+    card.appendChild(head);
+    card.appendChild(login);
+    card.appendChild(panel);
+    overlay.appendChild(backdrop);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
 
-function updateAdminProgress() {
-  const now = state.now;
-  if (!now || !now.track) {
-    adminProgressFill.style.width = "0%";
-    adminPosition.textContent = "00:00";
-    adminDuration.textContent = "--:--";
-    return;
-  }
-  const duration = Number(now.duration_ms) || 0;
-  let position = Number(now.position_ms) || 0;
-  if (!now.paused) {
-    position = Math.max(0, Date.now() + state.clockOffset - Number(now.started_at_ms || 0));
-  }
-  if (duration > 0) position = Math.min(position, duration);
-  const percent = duration > 0 ? (position / duration) * 100 : 0;
-  adminProgressFill.style.width = `${Math.min(100, Math.max(0, percent)).toFixed(2)}%`;
-  adminPosition.textContent = fmtTime(position);
-  adminDuration.textContent = fmtTime(duration, now.track.duration_estimated);
-}
-
-function pollState() {
-  if (!state.token) return;
-  fetchJSON("/api/state", { timeout: 6_000 })
-    .then((data) => {
-      renderNow(data.now || {});
-      renderQueueAdmin(data.queue || []);
-      renderMessagesAdmin(data.messages || []);
-    })
-    .catch(() => {
-      /* keep last state */
+    tokenInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") login();
     });
-}
-
-function startPolling() {
-  stopPolling();
-  state.pollTimer = setInterval(pollState, 4_000);
-}
-
-function stopPolling() {
-  if (state.pollTimer) {
-    clearInterval(state.pollTimer);
-    state.pollTimer = null;
   }
-}
 
-function applyState(data) {
-  renderNow(data.now || {});
-  renderQueueAdmin(data.queue || []);
-  renderMessagesAdmin(data.messages || []);
-
-  const settings = data.settings || {};
-  setStationName.value = settings.station_name || "";
-  setSubtitle.value = settings.subtitle || "";
-  setPageTitle.value = settings.page_title || "";
-  setNotice.value = settings.notice || "";
-  setBgInterval.value = String(settings.background_interval_sec || 300);
-
-  renderGallery(data.backgrounds || []);
-  startPolling();
-}
-
-function renderGallery(items) {
-  bgGallery.textContent = "";
-  if (!items.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "还没有背景";
-    bgGallery.appendChild(empty);
-    return;
+  function openConsole(showLogin = false) {
+    buildConsole();
+    const overlay = $("adminConsole");
+    overlay.classList.remove("hidden");
+    document.body.classList.add("admin-console-open");
+    if (state.token) {
+      loadState();
+    } else {
+      showLoginView();
+      if (showLogin) setTimeout(() => $("adminToken")?.focus(), 80);
+    }
   }
-  for (const item of items) {
-    const thumb = document.createElement("div");
-    thumb.className = "bg-thumb";
-    const image = document.createElement("img");
-    image.src = item.url;
-    image.alt = "";
-    image.onerror = () => {
-      if (!image.src.endsWith("/placeholder.svg")) image.src = "/placeholder.svg";
-    };
-    thumb.appendChild(image);
-    const type = document.createElement("span");
-    type.className = "bg-type";
-    type.textContent = item.type === "network" ? "图床" : "本地上传";
-    thumb.appendChild(type);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "×";
-    button.title = "删除背景";
-    button.addEventListener("click", async () => {
+
+  function closeConsole() {
+    $("adminConsole")?.classList.add("hidden");
+    document.body.classList.remove("admin-console-open");
+  }
+
+  function showLoginView() {
+    $("adminLoginView")?.classList.remove("hidden");
+    $("adminPanelView")?.classList.add("hidden");
+  }
+
+  function showPanelView() {
+    $("adminLoginView")?.classList.add("hidden");
+    $("adminPanelView")?.classList.remove("hidden");
+  }
+
+  async function login() {
+    const input = $("adminToken");
+    const button = $("adminLoginBtn");
+    if (!input || !button) return;
+    const token = input.value.trim();
+    if (!token) {
+      setLoginStatus("请输入管理 token", "error");
+      return;
+    }
+    state.token = token;
+    button.disabled = true;
+    setLoginStatus("正在验证…", "busy");
+    try {
+      const data = await api("/api/admin/state");
+      sessionSet(K_TOKEN, token);
+      state.data = data;
+      showPanelView();
+      setStatus("live", "已连接");
+      renderAll();
+      startPolling();
+      setLoginStatus("");
+    } catch (error) {
+      state.token = "";
+      sessionSet(K_TOKEN, null);
+      setLoginStatus(errorText(error, "登录失败"), "error");
+      setStatus("offline", "未登录");
+      showLoginView();
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function setLoginStatus(text, tone = "") {
+    const node = $("adminLoginStatus");
+    if (!node) return;
+    node.textContent = text;
+    node.dataset.tone = tone;
+  }
+
+  async function loadState(force = false) {
+    if (!state.token) return;
+    try {
+      state.data = await api("/api/admin/state");
+      showPanelView();
+      setStatus("live", "已连接");
+      if (force || !state.dirty) {
+        state.dirty = false;
+        renderAll();
+      }
+      startPolling();
+    } catch (error) {
+      if (error.status === 401 || error.status === 503) {
+        state.token = "";
+        sessionSet(K_TOKEN, null);
+        stopPolling();
+        setStatus("offline", "登录失效");
+        setLoginStatus(errorText(error, "登录失效"), "error");
+        showLoginView();
+      } else {
+        setStatus("offline", "连接中断");
+      }
+    }
+  }
+
+  function startPolling() {
+    if (state.timer) return;
+    state.timer = setInterval(() => {
+      if (!document.hidden && state.token && !$("adminConsole")?.classList.contains("hidden")) {
+        loadState();
+      }
+    }, 5_000);
+  }
+
+  function stopPolling() {
+    if (state.timer) clearInterval(state.timer);
+    state.timer = null;
+  }
+
+  function switchTab(tab) {
+    state.tab = tab;
+    for (const button of document.querySelectorAll(".admin-console-tab")) {
+      button.classList.toggle("active", button.dataset.tab === tab);
+    }
+    renderAll();
+  }
+
+  function clear(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function button(label, className, action) {
+    const btn = el("button", className, label);
+    btn.type = "button";
+    if (action) btn.addEventListener("click", action);
+    return btn;
+  }
+
+  function renderAll() {
+    if (!state.data) return;
+    renderTracks();
+    renderPolicy();
+    renderPage();
+    renderAccess();
+    renderMessages();
+    for (const button of document.querySelectorAll(".admin-console-tab")) {
+      button.classList.toggle("active", button.dataset.tab === state.tab);
+    }
+  }
+
+  function section(titleText, hint = "") {
+    const wrap = el("section", "admin-section");
+    const head = el("div", "admin-section-head");
+    head.appendChild(el("h3", "", titleText));
+    if (hint) head.appendChild(el("span", "admin-hint", hint));
+    wrap.appendChild(head);
+    return wrap;
+  }
+
+  function renderControl() {
+    const body = $("adminConsoleBody");
+    if (!body) return;
+    clear(body);
+    if (state.tab !== "control") {
+      renderTabPlaceholder(body);
+      return;
+    }
+    const now = state.data.now || {};
+    const wrap = section("播放与队列");
+    const nowBox = el("div", "admin-now");
+    if (now.track) {
+      nowBox.appendChild(el("strong", "", now.track.title || "未知曲目"));
+      nowBox.appendChild(el("span", "", ` · ${now.track.artist || "未知歌手"} · ${now.paused ? "已暂停" : "播放中"}`));
+    } else {
+      nowBox.textContent = "当前没有播放";
+    }
+    wrap.appendChild(nowBox);
+
+    const actions = el("div", "admin-console-actions");
+    actions.appendChild(button(now.paused ? "恢复" : "暂停", "primary-btn", () =>
+      adminAction(now.paused ? "/api/admin/resume" : "/api/admin/pause", now.paused ? "已恢复" : "已暂停"),
+    ));
+    actions.appendChild(button("切歌", "", () => adminAction("/api/admin/skip", "已切歌")));
+    actions.appendChild(button("清空待播放", "ghost-btn", async () => {
+      if (!window.confirm("清空所有待播放请求？")) return;
+      await adminAction("/api/admin/clear-queue", "已清空待播放");
+    }));
+    wrap.appendChild(actions);
+
+    const queue = Array.isArray(state.data.queue) ? state.data.queue : [];
+    const queueTitle = el("h4", "admin-subhead", `队列（${queue.length}）`);
+    wrap.appendChild(queueTitle);
+    if (!queue.length) wrap.appendChild(el("p", "empty", "队列为空"));
+    for (const item of queue) {
+      const row = el("div", "admin-row");
+      const copy = el("div", "admin-row-copy");
+      copy.appendChild(el("span", "admin-row-title", item.title || "未知曲目"));
+      copy.appendChild(el("span", "admin-row-sub", [
+        item.artist || "未知歌手",
+        item.status === "playing" ? "播放中" : "等待中",
+        item.nickname ? `by ${item.nickname}` : "",
+      ].filter(Boolean).join(" · ")));
+      row.appendChild(copy);
+      if (item.status === "pending") {
+        const delQueue = button("移出", "ghost-btn", async () => {
+          if (!window.confirm("从队列移出这首歌？")) return;
+          try {
+            await api("/api/admin/queue/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ queue_id: item.id }),
+            });
+            await loadState(true);
+          } catch (error) { setStatus("offline", errorText(error)); }
+        });
+        row.appendChild(delQueue);
+      }
+      const delTrack = button("删除曲目", "danger-btn", () => deleteTrack(item.track_id, item.title));
+      row.appendChild(delTrack);
+      wrap.appendChild(row);
+    }
+    body.appendChild(wrap);
+  }
+
+  function renderTabPlaceholder(body) {
+    if (state.tab === "tracks") return renderTracks(body);
+    if (state.tab === "policy") return renderPolicy(body);
+    if (state.tab === "page") return renderPage(body);
+    if (state.tab === "access") return renderAccess(body);
+    if (state.tab === "messages") return renderMessages(body);
+  }
+
+  function renderTracks(body = $("adminConsoleBody")) {
+    if (!body) return;
+    if (state.tab !== "tracks") return;
+    clear(body);
+    const wrap = section("曲目库", "删除后不可恢复");
+    const searchRow = el("form", "admin-search-row");
+    const input = el("input", "admin-token-input");
+    input.placeholder = "搜索歌名或歌手，加入播放列表";
+    input.maxLength = 80;
+    const searchButton = el("button", "primary-btn", "搜索");
+    searchButton.type = "submit";
+    searchRow.appendChild(input);
+    searchRow.appendChild(searchButton);
+    wrap.appendChild(searchRow);
+    const status = el("p", "form-status");
+    wrap.appendChild(status);
+    const results = el("div", "admin-search-results");
+    wrap.appendChild(results);
+    searchRow.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+      status.textContent = "正在搜索…";
+      results.textContent = "";
       try {
-        if (item.type === "network") {
-          await adminJson("/api/admin/background/url/delete", { url: item.url });
-        } else {
-          await adminJson("/api/admin/background/delete", { name: item.name });
+        const data = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { cache: "no-store" }).then((r) => r.json());
+        const items = data.results || [];
+        status.textContent = `找到 ${items.length} 首`;
+        for (const item of items) {
+          const row = el("div", "admin-row");
+          const copy = el("div", "admin-row-copy");
+          copy.appendChild(el("span", "admin-row-title", item.title || "未知曲目"));
+          copy.appendChild(el("span", "admin-row-sub", [item.artist, item.source_label].filter(Boolean).join(" · ")));
+          row.appendChild(copy);
+          row.appendChild(button("加入播放列表", "primary-btn", async () => {
+            try {
+              await api("/api/admin/track", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ candidate_id: item.candidate_id }),
+              });
+              status.textContent = "已加入播放列表";
+              await loadState(true);
+            } catch (error) { status.textContent = errorText(error); }
+          }));
+          results.appendChild(row);
         }
-        bgStatus.textContent = "已删除";
-        bgStatus.dataset.tone = "ok";
-        await loadState();
       } catch (error) {
-        bgStatus.textContent = errorText(error, "删除失败");
-        bgStatus.dataset.tone = "error";
+        status.textContent = errorText(error, "搜索失败");
       }
     });
-    thumb.appendChild(button);
-    bgGallery.appendChild(thumb);
-  }
-}
 
-async function loadState() {
-  if (!state.token) {
-    showLogin();
-    setStatus("offline", "未登录");
-    return;
-  }
-  try {
-    applyState(await adminFetch("/api/admin/state"));
-    showPanel();
-    setStatus("live", "已连接");
-    adminLoginStatus.textContent = "";
-  } catch (error) {
-    if (error.status === 401 || error.status === 503) {
-      state.token = "";
-      sessionSet("radio.adminToken", null);
-      showLogin();
-      setStatus("offline", "登录失效");
-      adminLoginStatus.textContent = errorText(error, "登录失效");
-      adminLoginStatus.dataset.tone = "error";
-    } else {
-      setStatus("offline", "连接中断");
-      adminSearchStatus.textContent = errorText(error, "加载失败");
-      adminSearchStatus.dataset.tone = "error";
-    }
-  }
-}
+    const queueActions = el("div", "admin-console-actions");
+    queueActions.appendChild(button("清空待播放", "ghost-btn", async () => {
+      if (!window.confirm("清空所有待播放请求？")) return;
+      await adminAction("/api/admin/clear-queue", "已清空待播放");
+    }));
+    wrap.appendChild(queueActions);
 
-async function login() {
-  const token = adminToken.value.trim();
-  if (!token) {
-    adminLoginStatus.textContent = "请输入管理 token";
-    adminLoginStatus.dataset.tone = "error";
-    return;
-  }
-  state.token = token;
-  adminLoginStatus.textContent = "正在验证…";
-  adminLoginStatus.dataset.tone = "busy";
-  adminLoginBtn.disabled = true;
-  try {
-    const data = await adminFetch("/api/admin/state");
-    sessionSet("radio.adminToken", token);
-    applyState(data);
-    showPanel();
-    setStatus("live", "已连接");
-    adminLoginStatus.textContent = "";
-  } catch (error) {
-    state.token = "";
-    sessionSet("radio.adminToken", null);
-    adminLoginStatus.textContent = errorText(error, "登录失败");
-    adminLoginStatus.dataset.tone = "error";
-  } finally {
-    adminLoginBtn.disabled = false;
-  }
-}
-
-function logout() {
-  state.token = "";
-  sessionSet("radio.adminToken", null);
-  adminToken.value = "";
-  stopPolling();
-  showLogin();
-  setStatus("offline", "未登录");
-}
-
-async function adminAction(path, successText) {
-  if (state.busy) return;
-  state.busy = true;
-  try {
-    await adminFetch(path, { method: "POST" });
-    await loadState();
-    adminSearchStatus.textContent = successText;
-    adminSearchStatus.dataset.tone = "ok";
-  } catch (error) {
-    adminSearchStatus.textContent = errorText(error);
-    adminSearchStatus.dataset.tone = "error";
-  } finally {
-    state.busy = false;
-  }
-}
-
-async function savePageSettings() {
-  settingsStatus.textContent = "正在保存…";
-  settingsStatus.dataset.tone = "busy";
-  try {
-    await adminJson("/api/admin/settings", {
-      station_name: setStationName.value,
-      subtitle: setSubtitle.value,
-      page_title: setPageTitle.value,
-      notice: setNotice.value,
-      background_interval_sec: Number(setBgInterval.value),
-    });
-    settingsStatus.textContent = "已保存";
-    settingsStatus.dataset.tone = "ok";
-    await loadState();
-  } catch (error) {
-    settingsStatus.textContent = errorText(error, "保存失败");
-    settingsStatus.dataset.tone = "error";
-  }
-}
-
-async function uploadBackground() {
-  const file = bgFile.files && bgFile.files[0];
-  if (!file) {
-    bgStatus.textContent = "请选择图片";
-    bgStatus.dataset.tone = "error";
-    return;
-  }
-  if (file.size > 8 * 1024 * 1024) {
-    bgStatus.textContent = "图片不能超过 8MB";
-    bgStatus.dataset.tone = "error";
-    return;
-  }
-  bgStatus.textContent = "正在上传…";
-  bgStatus.dataset.tone = "busy";
-  bgUpload.disabled = true;
-  try {
-    const response = await fetch("/api/admin/background", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${state.token}`,
-        "Content-Type": file.type || "application/octet-stream",
-      },
-      body: file,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(data.message || `HTTP ${response.status}`);
-      error.status = response.status;
-      error.data = data;
-      throw error;
-    }
-    bgFile.value = "";
-    bgStatus.textContent = "上传成功";
-    bgStatus.dataset.tone = "ok";
-    await loadState();
-  } catch (error) {
-    bgStatus.textContent = errorText(error, "上传失败");
-    bgStatus.dataset.tone = "error";
-  } finally {
-    bgUpload.disabled = false;
-  }
-}
-
-async function addBackgroundUrl() {
-  const url = bgUrl.value.trim();
-  if (!url) {
-    bgStatus.textContent = "请输入图片地址";
-    bgStatus.dataset.tone = "error";
-    return;
-  }
-  bgUrlAdd.disabled = true;
-  try {
-    await adminJson("/api/admin/background/url", { url });
-    bgUrl.value = "";
-    bgStatus.textContent = "图床地址已添加";
-    bgStatus.dataset.tone = "ok";
-    await loadState();
-  } catch (error) {
-    bgStatus.textContent = errorText(error, "添加失败");
-    bgStatus.dataset.tone = "error";
-  } finally {
-    bgUrlAdd.disabled = false;
-  }
-}
-
-async function search(event) {
-  event.preventDefault();
-  const query = adminSearchInput.value.trim();
-  if (!query) return;
-  adminSearchStatus.textContent = "正在搜索…";
-  adminSearchStatus.dataset.tone = "busy";
-  adminSearchResults.textContent = "";
-  try {
-    const data = await fetchJSON(`/api/search?q=${encodeURIComponent(query)}`, {
-      timeout: 25_000,
-    });
-    const results = data.results || [];
-    adminSearchStatus.textContent = `找到 ${results.length} 首`;
-    adminSearchStatus.dataset.tone = "ok";
-    for (const item of results) {
-      const row = document.createElement("div");
-      row.className = "search-result";
-
-      const image = document.createElement("img");
-      image.className = "search-cover";
-      image.src = item.cover_url || "/placeholder.svg";
-      image.alt = "";
-      row.appendChild(image);
-
-      const copy = document.createElement("span");
-      copy.className = "search-copy";
-      const name = document.createElement("span");
-      name.className = "search-title";
-      name.textContent = item.title;
-      const sub = document.createElement("span");
-      sub.className = "search-sub";
-      sub.textContent = [item.artist || "未知歌手", item.source_label || item.source].join(" · ");
-      copy.appendChild(name);
-      copy.appendChild(sub);
+    const tracks = Array.isArray(state.data.tracks) ? state.data.tracks : [];
+    wrap.appendChild(el("h4", "admin-subhead", `全部曲目（${tracks.length}）`));
+    if (!tracks.length) wrap.appendChild(el("p", "empty", "曲目库为空"));
+    for (const track of tracks) {
+      const row = el("div", "admin-row");
+      const copy = el("div", "admin-row-copy");
+      copy.appendChild(el("span", "admin-row-title", track.title || "未知曲目"));
+      copy.appendChild(el("span", "admin-row-sub", [
+        track.artist || "未知歌手",
+        track.source || "",
+        track.enabled ? "播放列表" : "未启用",
+      ].filter(Boolean).join(" · ")));
       row.appendChild(copy);
-
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "assign-btn";
-      button.textContent = "加入列表";
-      button.addEventListener("click", async () => {
-        button.disabled = true;
-        try {
-          await adminJson("/api/admin/track", { candidate_id: item.candidate_id });
-          adminSearchStatus.textContent = `已加入播放列表：${item.title}`;
-          adminSearchStatus.dataset.tone = "ok";
-          await loadState();
-        } catch (error) {
-          adminSearchStatus.textContent = errorText(error, "加入失败");
-          adminSearchStatus.dataset.tone = "error";
-          button.disabled = false;
-        }
-      });
-      row.appendChild(button);
-      adminSearchResults.appendChild(row);
+      row.appendChild(button("删除", "danger-btn", () => deleteTrack(track.id, track.title)));
+      wrap.appendChild(row);
     }
-  } catch (error) {
-    adminSearchStatus.textContent = errorText(error, "搜索失败");
-    adminSearchStatus.dataset.tone = "error";
+    body.appendChild(wrap);
   }
-}
 
-function switchTab(tab) {
-  state.tab = tab;
-  for (const button of document.querySelectorAll(".admin-nav button")) {
-    button.classList.toggle("active", button.dataset.tab === tab);
+  function renderPolicy(body = $("adminConsoleBody")) {
+    if (!body) return;
+    if (state.tab !== "policy") return;
+    clear(body);
+    const policy = state.data.policy || {};
+    const wrap = section("准入与格式", "保存后立即生效");
+    const makeToggle = (key, labelText) => {
+      const row = el("label", "admin-toggle-row");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = Boolean(policy[key]);
+      checkbox.id = `admin-${key}`;
+      row.appendChild(checkbox);
+      row.appendChild(el("span", "", labelText));
+      wrap.appendChild(row);
+      return checkbox;
+    };
+    const mp3Upload = makeToggle("mp3_upload_only", "只允许上传 MP3");
+    const mp3Remote = makeToggle("mp3_remote_only", "第三方音源只允许 MP3");
+    const requests = makeToggle("requests_enabled", "允许点歌");
+    const uploads = makeToggle("uploads_enabled", "允许上传音频");
+    const messages = makeToggle("messages_enabled", "允许留言");
+
+    const maxRow = el("label", "admin-field");
+    maxRow.appendChild(el("span", "", "最大同时听众人数（0 = 不限）"));
+    const max = document.createElement("input");
+    max.type = "number";
+    max.min = "0";
+    max.max = "10000";
+    max.value = String(policy.max_listeners || 0);
+    maxRow.appendChild(max);
+    wrap.appendChild(maxRow);
+
+    wrap.appendChild(el("p", "admin-note", "IP 准入由 Nginx 的 /etc/nginx/snippets/radio-allow.conf 管理（参考 Pigman02/radio-on-stick），升级会保留。这里只管理运行时限流、功能开关和 MP3 格式。第三方 MP3 限制会在音频无法确认为 MP3 时拒绝。"));
+
+    const save = button("保存策略", "primary-btn", async () => {
+      try {
+        await api("/api/admin/policy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mp3_upload_only: mp3Upload.checked,
+            mp3_remote_only: mp3Remote.checked,
+            requests_enabled: requests.checked,
+            uploads_enabled: uploads.checked,
+            messages_enabled: messages.checked,
+            max_listeners: Number(max.value) || 0,
+          }),
+        });
+        setStatus("live", "策略已保存");
+        await loadState(true);
+      } catch (error) {
+        setStatus("offline", errorText(error, "保存失败"));
+      }
+    });
+    wrap.appendChild(save);
+    body.appendChild(wrap);
   }
-  for (const section of document.querySelectorAll(".admin-tab")) {
-    section.classList.toggle("hidden", section.id !== `tab-${tab}`);
+
+  function renderPage(body = $("adminConsoleBody")) {
+    if (!body) return;
+    if (state.tab !== "page") return;
+    clear(body);
+    const settings = state.data.settings || {};
+    const wrap = section("页面与背景", "服务端背景只对未设置本机背景的客户端生效");
+    const field = (labelText, id, value, multiline = false) => {
+      const label = el("label", "admin-field");
+      label.appendChild(el("span", "", labelText));
+      const input = multiline ? document.createElement("textarea") : document.createElement("input");
+      input.id = id;
+      input.value = value || "";
+      if (multiline) input.rows = 3;
+      label.appendChild(input);
+      wrap.appendChild(label);
+      return input;
+    };
+    const station = field("电台名称", "adminStationName", settings.station_name);
+    const subtitle = field("副标题", "adminSubtitle", settings.subtitle);
+    const notice = field("公告", "adminNotice", settings.notice, true);
+    const interval = field("背景轮换秒数", "adminBgInterval", settings.background_interval_sec);
+    interval.type = "number";
+    interval.min = "30";
+    interval.max = "86400";
+    wrap.appendChild(button("保存页面设置", "primary-btn", async () => {
+      try {
+        await api("/api/admin/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            station_name: station.value,
+            subtitle: subtitle.value,
+            notice: notice.value,
+            background_interval_sec: Number(interval.value) || 300,
+          }),
+        });
+        const nextName = station.value.trim() || "猫娘电台";
+        const nextSubtitle = subtitle.value.trim();
+        document.title = nextSubtitle ? `${nextName} - ${nextSubtitle}` : nextName;
+        setStatus("live", "页面设置已保存");
+        await loadState(true);
+      } catch (error) { setStatus("offline", errorText(error, "保存失败")); }
+    }));
+
+    wrap.appendChild(el("h4", "admin-subhead", "服务端背景图库"));
+    const uploadRow = el("div", "admin-console-actions");
+    const file = document.createElement("input");
+    file.type = "file";
+    file.accept = "image/jpeg,image/png,image/webp";
+    uploadRow.appendChild(file);
+    uploadRow.appendChild(button("上传背景", "primary-btn", async () => {
+      if (!file.files || !file.files[0]) return;
+      try {
+        const response = await fetch("/api/admin/background", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${state.token}`, "Content-Type": file.files[0].type || "application/octet-stream" },
+          body: file.files[0],
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw Object.assign(new Error(data.message || "上传失败"), { data });
+        file.value = "";
+        setStatus("live", "背景已上传");
+        await loadState(true);
+      } catch (error) { setStatus("offline", errorText(error, "上传失败")); }
+    }));
+    wrap.appendChild(uploadRow);
+
+    const urlRow = el("div", "admin-search-row");
+    const urlInput = el("input", "admin-token-input");
+    urlInput.placeholder = "https://example.com/background.jpg";
+    urlRow.appendChild(urlInput);
+    urlRow.appendChild(button("添加图床", "ghost-btn", async () => {
+      try {
+        await api("/api/admin/background/url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: urlInput.value.trim() }),
+        });
+        urlInput.value = "";
+        setStatus("live", "图床地址已添加");
+        await loadState(true);
+      } catch (error) { setStatus("offline", errorText(error, "添加失败")); }
+    }));
+    wrap.appendChild(urlRow);
+
+    const gallery = el("div", "bg-gallery");
+    for (const item of state.data.backgrounds || []) {
+      const thumb = el("div", "bg-thumb");
+      const image = document.createElement("img");
+      image.src = item.url;
+      image.alt = "";
+      thumb.appendChild(image);
+      thumb.appendChild(el("span", "bg-type", item.type === "network" ? "图床" : "本地"));
+      thumb.appendChild(button("×", "danger-btn", async () => {
+        try {
+          if (item.type === "network") {
+            await api("/api/admin/background/url/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: item.url }) });
+          } else {
+            await api("/api/admin/background/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: item.name }) });
+          }
+          await loadState(true);
+        } catch (error) { setStatus("offline", errorText(error, "删除失败")); }
+      }));
+      gallery.appendChild(thumb);
+    }
+    wrap.appendChild(gallery);
+    body.appendChild(wrap);
   }
-}
 
-adminLoginBtn.addEventListener("click", login);
-adminToken.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") login();
-});
-adminLogout.addEventListener("click", logout);
-adminToggle.addEventListener("click", () => {
-  const paused = Boolean(state.now && state.now.paused);
-  adminAction(
-    paused ? "/api/admin/resume" : "/api/admin/pause",
-    paused ? "已恢复" : "已暂停"
-  );
-});
-adminSkip.addEventListener("click", () => adminAction("/api/admin/skip", "已切歌"));
-adminClearQueue.addEventListener("click", () =>
-  adminAction("/api/admin/clear-queue", "已清空队列")
-);
-saveSettings.addEventListener("click", savePageSettings);
-bgUpload.addEventListener("click", uploadBackground);
-bgUrlAdd.addEventListener("click", addBackgroundUrl);
-bgUrl.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") addBackgroundUrl();
-});
-adminSearchForm.addEventListener("submit", search);
-for (const button of document.querySelectorAll(".admin-nav button")) {
-  button.addEventListener("click", () => switchTab(button.dataset.tab));
-}
+  function renderAccess(body = $("adminConsoleBody")) {
+    if (!body) return;
+    if (state.tab !== "access") return;
+    clear(body);
+    const settings = state.data.settings || {};
+    const wrap = section("访问与部署", "仅管理端可见，不会修改 Nginx、TLS 或隧道");
+    const field = (labelText, id, value, placeholder = "") => {
+      const label = el("label", "admin-field");
+      label.appendChild(el("span", "", labelText));
+      const input = document.createElement("input");
+      input.id = id;
+      input.value = value || "";
+      input.placeholder = placeholder;
+      label.appendChild(input);
+      wrap.appendChild(label);
+      return input;
+    };
+    const publicUrl = field("公开访问地址", "adminPublicUrl", settings.public_url, "https://radio.example.com/");
+    const lanUrl = field("校园内网地址", "adminLanUrl", settings.lan_url, "https://172.18.1.10:8443/");
+    const tunnelUrl = field("备用隧道地址", "adminTunnelUrl", settings.tunnel_url, "https://xxxx.trycloudflare.com/");
+    const note = document.createElement("textarea");
+    note.id = "adminAccessNote";
+    note.rows = 3;
+    note.value = settings.access_note || "";
+    note.placeholder = "例如：仅校园网、Safari 需安装 CA、管理端入口说明";
+    const noteLabel = el("label", "admin-field");
+    noteLabel.appendChild(el("span", "", "访问说明"));
+    noteLabel.appendChild(note);
+    wrap.appendChild(noteLabel);
+    wrap.appendChild(el("p", "admin-note", "这里只记录部署信息。IP 白名单、TLS 证书、Cloudflare 隧道和 RADIO_ADMIN_TOKEN 必须留在服务器环境文件或 Nginx 配置中，不能由网页管理。"));
+    wrap.appendChild(button("保存访问配置", "primary-btn", async () => {
+      try {
+        await api("/api/admin/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            public_url: publicUrl.value.trim(),
+            lan_url: lanUrl.value.trim(),
+            tunnel_url: tunnelUrl.value.trim(),
+            access_note: note.value.trim(),
+          }),
+        });
+        setStatus("live", "访问配置已保存");
+        await loadState(true);
+      } catch (error) { setStatus("offline", errorText(error, "保存失败")); }
+    }));
+    body.appendChild(wrap);
+  }
 
-setInterval(updateAdminProgress, 500);
+  function renderMessages(body = $("adminConsoleBody")) {
+    if (!body) return;
+    if (state.tab !== "messages") return;
+    clear(body);
+    const wrap = section("留言管理");
+    const messages = Array.isArray(state.data.messages) ? state.data.messages : [];
+    if (!messages.length) wrap.appendChild(el("p", "empty", "还没有留言"));
+    for (const item of messages) {
+      const row = el("div", "admin-row");
+      const copy = el("div", "admin-row-copy");
+      copy.appendChild(el("span", "admin-row-title", item.nickname || "匿名"));
+      copy.appendChild(el("span", "admin-row-sub", item.body || ""));
+      row.appendChild(copy);
+      row.appendChild(button("隐藏", "ghost-btn", async () => {
+        try {
+          await api("/api/admin/hide-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: item.id }),
+          });
+          await loadState(true);
+        } catch (error) { setStatus("offline", errorText(error, "隐藏失败")); }
+      }));
+      wrap.appendChild(row);
+    }
+    body.appendChild(wrap);
+  }
 
-state.token = sessionGet("radio.adminToken") || "";
-if (state.token) {
-  showPanel();
-  loadState();
-} else {
-  showLogin();
-  setStatus("offline", "未登录");
-}
+  async function deleteTrack(trackId, title) {
+    if (!trackId) return;
+    if (!window.confirm(`删除曲目「${title || trackId}」？`)) return;
+    try {
+      await api("/api/admin/track/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_id: trackId }),
+      });
+      setStatus("live", "曲目已删除");
+      await loadState(true);
+    } catch (error) {
+      setStatus("offline", errorText(error, "删除失败"));
+    }
+  }
+
+  async function adminAction(path, success) {
+    try {
+      await api(path, { method: "POST" });
+      setStatus("live", success);
+      await loadState(true);
+    } catch (error) {
+      setStatus("offline", errorText(error));
+    }
+  }
+
+  /* ---------- boot ---------- */
+  addTopbarButton();
+  state.token = sessionGet(K_TOKEN) || "";
+  buildConsole();
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target && target.closest("#adminLoginBtn")) {
+      event.preventDefault();
+      login();
+    }
+  });
+  if (state.token) {
+    loadState();
+  } else {
+    openConsole(true);
+  }
+  document.addEventListener("input", (event) => {
+    if (event.target && event.target.closest("#adminConsole")) state.dirty = true;
+  });
+  document.addEventListener("change", (event) => {
+    if (event.target && event.target.closest("#adminConsole")) state.dirty = true;
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("adminConsole")?.classList.contains("hidden")) {
+      closeConsole();
+    }
+  });
+})();
