@@ -158,6 +158,8 @@ const state = {
   preloadAudio: null,
   preloadKey: "",
   preloadCover: null,
+  frameId: null,
+  lastMediaPositionAt: 0,
 };
 
 // Local/owner playback can request ?direct=1 to avoid P2P entirely and
@@ -1381,10 +1383,12 @@ function wireAudioElement(element) {
   element.addEventListener("pause", () => {
     if (element !== audio) return;
     updatePlayButton();
+    updateMediaSession(state.now);
   });
   element.addEventListener("play", () => {
     if (element !== audio) return;
     updatePlayButton();
+    updateMediaSession(state.now);
   });
   element.addEventListener("error", () => {
     if (element !== audio || !state.userWantsPlay || !element.src) return;
@@ -1414,6 +1418,12 @@ function preloadNext(now = state.now) {
   const position = now.paused
     ? Number(now.position_ms) || 0
     : Date.now() + state.clockOffset - Number(now.started_at_ms || 0);
+  const remaining = duration - position;
+  const preloadWindow = document.hidden ? 20_000 : 45_000;
+  if (remaining > preloadWindow) {
+    if (state.preloadKey && state.preloadKey !== key) stopPreload();
+    return;
+  }
   if (state.preloadKey === key) return;
 
   stopPreload();
@@ -1426,13 +1436,15 @@ function preloadNext(now = state.now) {
   state.preloadAudio = element;
   state.preloadKey = key;
 
-  if (next.cover_url) {
-    const image = new Image();
-    image.src = next.cover_url;
-    state.preloadCover = image;
-  }
-  if (next.lyrics_url) {
-    fetch(next.lyrics_url, { cache: "force-cache" }).catch(() => {});
+  if (!document.hidden) {
+    if (next.cover_url) {
+      const image = new Image();
+      image.src = next.cover_url;
+      state.preloadCover = image;
+    }
+    if (next.lyrics_url) {
+      fetch(next.lyrics_url, { cache: "force-cache" }).catch(() => {});
+    }
   }
 }
 
@@ -1590,6 +1602,8 @@ function applyNow(now) {
   updatePlayButton();
   updateVoteUI(now);
   preloadNext(now);
+  updateMediaSession(now);
+  updateMediaSessionPosition(now);
   refreshStatus();
 }
 
@@ -2245,7 +2259,7 @@ function renderMessages(items) {
   const previousScrollTop = messageList.scrollTop;
   const previousHeight = messageList.scrollHeight;
   const previousCount = state.lastMessageCount;
-  const ordered = items.slice(0, 10).reverse();
+  const ordered = items.slice().reverse();
   state.lastMessageCount = ordered.length;
 
   messageList.textContent = "";
@@ -2656,9 +2670,107 @@ function hideModal(element) {
   updateModalState();
 }
 
-/* ---------- render loop ---------- */
+/* ---------- media session / render loop ---------- */
+
+function absoluteUrl(url) {
+  try {
+    return new URL(url, window.location.href).href;
+  } catch (_) {
+    return "";
+  }
+}
+
+function updateMediaSession(now = state.now) {
+  if (!("mediaSession" in navigator)) return;
+  const track = now && now.track;
+  try {
+    if (!track) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+      return;
+    }
+    if (typeof MediaMetadata === "function") {
+      const cover = absoluteUrl(track.cover_url || "");
+      const artwork = /^https?:/i.test(cover)
+        ? [{ src: cover, sizes: "300x300" }]
+        : [];
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: track.title || "",
+        artist: track.artist || "",
+        album: track.album || "",
+        artwork,
+      });
+    }
+    navigator.mediaSession.playbackState = audio.paused ? "paused" : "playing";
+  } catch (_) {
+    /* media session is best-effort */
+  }
+}
+
+function updateMediaSessionPosition(now = state.now) {
+  if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState) return;
+  if (!now || !now.track) return;
+  const timestamp = Date.now();
+  if (timestamp - state.lastMediaPositionAt < 5_000) return;
+  const duration = Number(now.duration_ms) || 0;
+  const useLocal = Boolean(audio.src) && audio.readyState > 0;
+  const position = useLocal ? audio.currentTime * 1000 : currentPosition(now);
+  if (duration <= 0 || !Number.isFinite(position)) return;
+  state.lastMediaPositionAt = timestamp;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration: duration / 1000,
+      playbackRate: 1,
+      position: clamp(position / 1000, 0, duration / 1000),
+    });
+  } catch (_) {
+    /* ignore unsupported position state */
+  }
+}
+
+function setupMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+  const register = (action, handler) => {
+    try {
+      navigator.mediaSession.setActionHandler(action, handler);
+    } catch (_) {
+      /* unsupported action */
+    }
+  };
+  register("play", () => {
+    if (!state.now || !state.now.track || state.serverPaused) return;
+    state.userWantsPlay = true;
+    if (!ensureSourceLoaded()) {
+      seekToLive();
+      attemptPlay();
+    }
+    updatePlayButton();
+  });
+  register("pause", () => {
+    state.userWantsPlay = false;
+    audio.pause();
+    stopPreload();
+    updatePlayButton();
+  });
+  register("seekto", (details) => {
+    if (typeof details.seekTime !== "number") return;
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+    try {
+      audio.currentTime = clamp(details.seekTime, 0, audio.duration - 0.1);
+    } catch (_) {
+      /* ignore */
+    }
+  });
+}
+
+function startFrame() {
+  if (state.frameId !== null || document.hidden) return;
+  state.frameId = requestAnimationFrame(frame);
+}
 
 function frame() {
+  state.frameId = null;
+  if (document.hidden) return;
   const now = state.now;
   if (now && now.track) {
     const meshPosition = mesh && mesh.isActive() ? mesh.positionMs() : null;
@@ -2679,8 +2791,9 @@ function frame() {
       positionEl.textContent = fmtTime(position);
     }
     updateLyrics(position);
+    updateMediaSessionPosition(now);
   }
-  requestAnimationFrame(frame);
+  state.frameId = requestAnimationFrame(frame);
 }
 
 /* ---------- events ---------- */
@@ -2875,12 +2988,18 @@ window.addEventListener("offline", () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) {
-    pollNow();
-    loadSidebar();
-  } else {
+  if (document.hidden) {
+    if (state.frameId !== null) {
+      cancelAnimationFrame(state.frameId);
+      state.frameId = null;
+    }
     schedulePoll();
+    return;
   }
+  startFrame();
+  pollNow();
+  loadSidebar();
+  updateMediaSession(state.now);
 });
 
 function registerAppShell() {
@@ -2932,7 +3051,8 @@ audio.volume = clamp(Number.isFinite(initialVolume) ? initialVolume : 0.8, 0, 1)
 updatePlayButton();
 refreshStatus();
 setLyricsEmpty("等待开播");
-requestAnimationFrame(frame);
+setupMediaSession();
+startFrame();
 loadConfig();
 pollNow();
 loadSidebar();

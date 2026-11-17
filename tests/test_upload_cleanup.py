@@ -101,7 +101,7 @@ class UploadCleanupTests(unittest.TestCase):
         self.assertEqual(result["files"], 1)
         self.assertFalse(stored.exists())
         self.assertIsNone(self.app.db.get_track(track_id))
-        self.assertEqual(self.app.db.list_request_history("unused", 10), [])
+        self.assertEqual(self.app.db.list_request_history(10), [])
 
     def test_foreign_file_in_uploads_dir_is_never_removed(self) -> None:
         foreign = Path(self.config.uploads_dir) / "owner-original.mp3"

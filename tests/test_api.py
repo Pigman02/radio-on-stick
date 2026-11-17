@@ -374,6 +374,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(matching), 1)
         first_created = matching[0]["created_at"]
 
+        _, other_ip_state = self.request(
+            "GET", "/api/state", headers={"X-Real-IP": "10.77.77.77"}
+        )
+        self.assertTrue(
+            any(
+                item["track_id"] == track_id
+                for item in other_ip_state["history"]
+            )
+        )
+
         self.app.db.clear_pending()
         self.app.player.skip("test")
         status, second = self.request(
@@ -424,6 +434,16 @@ class ApiTests(unittest.TestCase):
         _, state = self.request("GET", "/api/state")
         self.assertEqual(state["queue"], [])
         self.assertEqual(state["messages"][0]["body"], "hello there")
+
+    def test_message_retention_limit(self):
+        for index in range(5):
+            self.app.db.insert_message(
+                "test-key", "Tester", f"message-{index}", None
+            )
+        self.app.db.trim_messages(3)
+        _, data = self.request("GET", "/api/messages")
+        self.assertEqual(len(data["messages"]), 3)
+        self.assertEqual(data["messages"][0]["body"], "message-4")
 
     def test_message_requires_body(self):
         status, data = self.request("POST", "/api/messages", {"nickname": "Tester"})
