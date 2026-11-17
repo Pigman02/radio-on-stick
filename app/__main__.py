@@ -7,6 +7,7 @@ import threading
 from types import FrameType
 
 from .app import build_app
+from .ffmpeg import ffmpeg_status
 from .config import Config
 from .httpd import make_server
 
@@ -27,6 +28,14 @@ def main() -> int:
     app.player.start()
     server = make_server(app)
     host, port = server.server_address[:2]
+    ffmpeg = ffmpeg_status(config.ffmpeg_path)
+    if ffmpeg["available"]:
+        logger.info("ffmpeg: %s", ffmpeg["version"])
+    else:
+        logger.warning(
+            "ffmpeg not found; MP3 can still use passthrough fallback, but "
+            "non-MP3/transcoding needs deploy/ensure_ffmpeg.py --install"
+        )
     logger.info("radio listening on http://%s:%s", host, port)
 
     stop_event = threading.Event()

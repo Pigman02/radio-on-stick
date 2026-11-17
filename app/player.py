@@ -19,6 +19,18 @@ def _safe_url(url: Any) -> str:
     value = str(url or "").strip()
     if not value:
         return ""
+    # Uploaded files live under the app's own private media route.  Keep the
+    # URL relative so the deployment host is never guessed by the player.
+    if value.startswith("/media/uploads/"):
+        name = value[len("/media/uploads/") :]
+        if name and "/" not in name and "\\" not in name and name not in {".", ".."}:
+            return value
+        return ""
+    if value.startswith("/native/"):
+        name = value[len("/native/") :]
+        if name and "/" not in name and "\\" not in name and name not in {".", ".."}:
+            return value
+        return ""
     try:
         parts = urllib.parse.urlsplit(value)
     except ValueError:
@@ -203,7 +215,17 @@ class Player:
                 self._trim_rotation_skip(playlist)
 
             self._track_id = str(track["id"])
-            self._started_at = now
+            # Give every client a short, server-side pre-roll window before
+            # the public timeline starts.  This is what prevents the first
+            # seconds of a skipped track from being cut while clients poll
+            # and open the new stream.
+            preroll_reasons = {"vote", "admin", "skip", "admin-delete"}
+            preroll = (
+                max(0, int(self.config.track_preroll_ms))
+                if reason in preroll_reasons
+                else 0
+            )
+            self._started_at = now + preroll
             self._paused = False
             self._paused_position = 0
             self._queue_id = queue_id
@@ -218,6 +240,8 @@ class Player:
             return track, self._seq
 
     def _resolve_track_audio(self, track: dict[str, Any], seq: int) -> None:
+        if track.get("source") == "upload":
+            return
         with self._refresh_lock:
             with self._lock:
                 if seq != self._seq:
@@ -368,6 +392,23 @@ class Player:
         return playlist[index]
 
     @staticmethod
+    def _native_url(track: dict[str, Any]) -> str:
+        track_id = str(track.get("id") or "").strip()
+        if not track_id:
+            return ""
+        return "/native/" + urllib.parse.quote(track_id, safe="")
+
+    @staticmethod
+    def _server_audio(track: dict[str, Any]) -> dict[str, Any]:
+        # Never expose the third-party upstream URL to the browser.  Every
+        # direct fallback goes back through this server endpoint.
+        return {
+            "direct": Player._native_url(track),
+            "alternates": [],
+            "upstream": _safe_url(track.get("audio_primary")),
+        }
+
+    @staticmethod
     def _track_summary(track: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": track.get("id"),
@@ -508,13 +549,15 @@ class Player:
                     self._refresh_inflight.discard(seq)
         return self.snapshot(ensure=False)
 
-    def upcoming(self, limit: int = 40) -> list[dict[str, Any]]:
+    def upcoming(
+        self, limit: int = 40, requester_key: str | None = None
+    ) -> list[dict[str, Any]]:
         self._ensure_state_only()
         with self._lock:
             limit = max(1, int(limit))
             current = self._current_track()
             current_id = str(current["id"]) if current else ""
-            queue_rows = self.db.list_queue(50)
+            queue_rows = self.db.list_queue_for(requester_key, 50)
             items: list[dict[str, Any]] = []
             seen: set[str] = set()
 
@@ -532,6 +575,7 @@ class Player:
                         "cover_url": playing.get("cover_url") or "",
                         "nickname": playing.get("nickname"),
                         "priority": int(playing.get("priority") or 0),
+                        "can_cancel": False,
                         "status": "playing",
                     }
                 )
@@ -563,6 +607,8 @@ class Player:
                         "cover_url": row.get("cover_url") or "",
                         "nickname": row.get("nickname"),
                         "priority": int(row.get("priority") or 0),
+                        "can_cancel": bool(row.get("can_cancel")),
+                        "pinned_by_me": bool(row.get("pinned_by_me")),
                         "status": "pending",
                     }
                 )
@@ -627,28 +673,14 @@ class Player:
             if next_track is not None:
                 next_summary = self._track_summary(next_track)
                 next_summary["lyrics_url"] = f"/api/lyrics/{next_track['id']}"
-                next_summary["audio"] = {
-                    "direct": _safe_url(next_track.get("audio_primary")),
-                    "alternates": [
-                        url
-                        for url in (next_track.get("audio_alternates") or [])
-                        if _safe_url(url)
-                    ],
-                }
+                next_summary["audio"] = Player._server_audio(next_track)
             base.update(
                 {
                     "track": self._track_summary(track),
                     "started_at_ms": self._started_at,
                     "position_ms": position,
                     "duration_ms": duration,
-                    "audio": {
-                        "direct": _safe_url(track.get("audio_primary")),
-                        "alternates": [
-                            url
-                            for url in (track.get("audio_alternates") or [])
-                            if _safe_url(url)
-                        ],
-                    },
+                    "audio": Player._server_audio(track),
                     "lyrics_url": f"/api/lyrics/{track['id']}",
                     "next": next_summary,
                     "queue": {

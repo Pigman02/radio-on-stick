@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.community import ListenerTracker, VoteTracker
+from app.community import LeafAdmission, ListenerTracker, VoteTracker
 
 
 class FakeClock:
@@ -70,3 +70,16 @@ class VoteTrackerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LeafAdmissionTests(unittest.TestCase):
+    def test_caps_distinct_clients_and_expires(self):
+        clock = FakeClock()
+        admission = LeafAdmission(max_active=2, ttl_sec=10, clock=clock)
+        self.assertFalse(LeafAdmission(max_active=0, ttl_sec=10, clock=clock).allow("ip:a"))
+        self.assertTrue(admission.allow("ip:a"))
+        self.assertTrue(admission.allow("ip:b"))
+        self.assertFalse(admission.allow("ip:c"))
+        self.assertTrue(admission.allow("ip:a"))
+        clock.advance(11)
+        self.assertTrue(admission.allow("ip:c"))

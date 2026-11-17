@@ -65,3 +65,12 @@ Thumbs.db
 *.bak
 *.orig
 *.rej
+
+# Private deployment/campus configuration.  Keep these local; the generic
+# application must not depend on one campus's IPs, CA, tunnel or paths.
+docs/CAMPUS.md
+docs/radio-campus-ca.crt
+docs/screenshots/
+deploy/macos-campus-*.sh
+deploy/refresh-cernet-allow.py
+prototype/

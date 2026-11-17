@@ -16,6 +16,9 @@ trap 'rm -rf "${STAGE_DIR}"' EXIT
 PKG_ROOT="${STAGE_DIR}/radio-on-stick-${VERSION}"
 mkdir -p "${PKG_ROOT}"
 cp -a app deploy tools tests docs AGENTS.md README.md .gitignore "${PKG_ROOT}/"
+# Never package campus/private deployment notes, local CA, Mac helper scripts
+# or unrelated prototypes, even when they are present in the working tree.
+rm -rf   "${PKG_ROOT}/prototype"   "${PKG_ROOT}/docs/screenshots"   "${PKG_ROOT}/docs/CAMPUS.md"   "${PKG_ROOT}/docs/radio-campus-ca.crt"   "${PKG_ROOT}/deploy/macos-campus-start.sh"   "${PKG_ROOT}/deploy/macos-campus-stop.sh"   "${PKG_ROOT}/deploy/refresh-cernet-allow.py"
 find "${PKG_ROOT}" -type d -name '__pycache__' -prune -exec rm -rf {} +
 find "${PKG_ROOT}" -name '*.pyc' -delete
 tar -C "${STAGE_DIR}" \

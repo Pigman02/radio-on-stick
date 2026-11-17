@@ -17,9 +17,9 @@ TimeoutStopSec=15
 UMask=0077
 
 # Keep the little box alive; the Python service is intentionally small.
-MemoryHigh=120M
-MemoryMax=160M
-TasksMax=64
+MemoryHigh=180M
+MemoryMax=240M
+TasksMax=96
 LimitNOFILE=256
 
 NoNewPrivileges=true

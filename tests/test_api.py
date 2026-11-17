@@ -149,6 +149,12 @@ class ApiTests(unittest.TestCase):
             finally:
                 exc.close()
 
+    def test_healthz_reports_ffmpeg(self):
+        status, data = self.request("GET", "/healthz")
+        self.assertEqual(status, 200)
+        self.assertIn("ffmpeg", data)
+        self.assertIn("available", data["ffmpeg"])
+
     def test_now_json(self):
         status, data = self.request(
             "GET", "/now.json", headers={"X-Real-IP": "10.0.0.1"}
@@ -156,6 +162,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(data["track"]["title"], "First Song")
         self.assertIn("audio", data)
+        self.assertTrue(data["audio"]["direct"].startswith("/native/"))
+        self.assertNotIn("upstream", data["audio"])
         self.assertIn("server_time_ms", data)
         self.assertEqual(data["listeners"], 1)
         self.assertEqual(data["vote"]["votes"], 0)
@@ -188,9 +196,56 @@ class ApiTests(unittest.TestCase):
         )
         _, now = self.request("GET", "/now.json")
         self.assertEqual(now["next"]["id"], "t2")
-        self.assertEqual(
-            now["next"]["audio"]["direct"],
-            "https://example.invalid/second.mp3",
+        self.assertTrue(now["next"]["audio"]["direct"].startswith("/native/"))
+        self.assertNotIn("upstream", now["next"]["audio"])
+        self.assertNotIn("example.invalid/second.mp3", str(now["next"]["audio"]))
+
+    def test_own_pending_request_can_be_cancelled(self):
+        # Start the playlist fixture first so the new request stays pending.
+        self.request("GET", "/now.json", headers={"X-Real-IP": "10.0.0.51"})
+        status, body = self.request(
+            "POST",
+            "/api/request",
+            {"query": "Cancel Song", "nickname": "Canceller"},
+            headers={"X-Real-IP": "10.0.0.51"},
+        )
+        self.assertEqual(status, 201, body)
+        queue_id = body["request_id"]
+        _status, own_state = self.request(
+            "GET", "/api/state", headers={"X-Real-IP": "10.0.0.51"}
+        )
+        own_item = next(
+            item for item in own_state["upcoming"] if item.get("queue_id") == queue_id
+        )
+        self.assertTrue(own_item["can_cancel"])
+        _status, other_state = self.request(
+            "GET", "/api/state", headers={"X-Real-IP": "10.0.0.52"}
+        )
+        other_item = next(
+            item for item in other_state["upcoming"] if item.get("queue_id") == queue_id
+        )
+        self.assertFalse(other_item["can_cancel"])
+
+        status, _ = self.request(
+            "POST",
+            "/api/queue/cancel",
+            {"queue_id": queue_id},
+            headers={"X-Real-IP": "10.0.0.52"},
+        )
+        self.assertEqual(status, 404)
+
+        status, _ = self.request(
+            "POST",
+            "/api/queue/cancel",
+            {"queue_id": queue_id},
+            headers={"X-Real-IP": "10.0.0.51"},
+        )
+        self.assertEqual(status, 200)
+        _status, state = self.request(
+            "GET", "/api/state", headers={"X-Real-IP": "10.0.0.51"}
+        )
+        self.assertFalse(
+            any(item.get("queue_id") == queue_id for item in state["upcoming"])
         )
 
     def test_upcoming_merges_current_and_playlist(self):
@@ -334,6 +389,29 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(matching), 1)
         self.assertGreaterEqual(matching[0]["created_at"], first_created)
 
+    def test_request_history_is_shared_between_listeners(self):
+        status, first = self.request(
+            "POST",
+            "/api/request",
+            {"query": "Shared History One", "nickname": "One", "ts": now_ms()},
+            headers={"X-Real-IP": "10.0.2.1"},
+        )
+        self.assertEqual(status, 201, first)
+        status, second = self.request(
+            "POST",
+            "/api/request",
+            {"query": "Shared History Two", "nickname": "Two", "ts": now_ms()},
+            headers={"X-Real-IP": "10.0.2.2"},
+        )
+        self.assertEqual(status, 201, second)
+
+        _, state = self.request(
+            "GET", "/api/state", headers={"X-Real-IP": "10.0.2.1"}
+        )
+        titles = {item["title"] for item in state["history"]}
+        self.assertIn("Shared History One", titles)
+        self.assertIn("Shared History Two", titles)
+
     def test_messages_are_separate_from_requests(self):
         status, data = self.request(
             "POST",
@@ -371,6 +449,37 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(config["subtitle"], "sub")
         self.assertEqual(config["notice"], "notice")
         self.assertEqual(config["background_interval_sec"], 120)
+
+    def test_admin_access_settings_are_admin_only(self):
+        status, data = self.request(
+            "POST",
+            "/api/admin/settings",
+            {
+                "public_url": "https://radio.example.com/",
+                "lan_url": "https://172.18.1.10:8443/",
+                "tunnel_url": "https://demo.trycloudflare.com/",
+                "access_note": "校园网测试",
+            },
+            token="secret",
+        )
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["settings"]["public_url"], "https://radio.example.com/")
+        status, state = self.request("GET", "/api/admin/state", token="secret")
+        self.assertEqual(status, 200, state)
+        self.assertEqual(state["settings"]["lan_url"], "https://172.18.1.10:8443/")
+        _, config = self.request("GET", "/api/config")
+        self.assertNotIn("public_url", config)
+        self.assertNotIn("lan_url", config)
+
+    def test_admin_access_settings_validate_urls(self):
+        status, data = self.request(
+            "POST",
+            "/api/admin/settings",
+            {"public_url": "not-a-url"},
+            token="secret",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "bad_settings")
 
     def test_admin_state(self):
         status, data = self.request("GET", "/api/admin/state", token="secret")
@@ -519,6 +628,24 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(vote2["now"]["track"]["id"], "t2")
         self.assertEqual(vote2["now"]["vote"]["votes"], 0)
 
+    def test_listener_list_includes_nicknames(self):
+        status, first = self.request(
+            "GET",
+            "/api/listeners?nickname=Alice",
+            headers={"X-Real-IP": "10.0.3.1"},
+        )
+        self.assertEqual(status, 200, first)
+        status, second = self.request(
+            "GET",
+            "/api/listeners?nickname=Bob",
+            headers={"X-Real-IP": "10.0.3.2"},
+        )
+        self.assertEqual(status, 200, second)
+        names = {item["nickname"] for item in second["items"]}
+        self.assertIn("Alice", names)
+        self.assertIn("Bob", names)
+        self.assertEqual(second["listeners"], len(second["items"]))
+
     def test_queue_pin_is_unique_per_person(self):
         self.app.db.insert_track(
             {
@@ -555,6 +682,16 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertFalse(data["pinned"])
+        self.assertEqual(data["pins"], 0)
+
+        status, data = self.request(
+            "POST",
+            "/api/queue/pin",
+            {"queue_id": q2},
+            headers={"X-Real-IP": "10.0.1.1"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["pinned"])
         self.assertEqual(data["pins"], 1)
 
         status, data = self.request(
@@ -603,8 +740,12 @@ class ApiTests(unittest.TestCase):
         with urllib.request.urlopen(f"{self.base}/admin", timeout=10) as response:
             body = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-            self.assertIn("admin.js", body)
-            self.assertIn("adminLogin", body)
+            self.assertIn("app.js", body)
+        with urllib.request.urlopen(f"{self.base}/admin.js", timeout=10) as response:
+            script = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("adminConsole", script)
+            self.assertIn("mp3_upload_only", script)
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ class Config:
     data_dir: Path = BASE_DIR / "data"
     db_path: Path = BASE_DIR / "data" / "radio.db"
     static_dir: Path = BASE_DIR / "app" / "static"
-    station_name: str = "我的电台"
+    station_name: str = "猫娘电台"
     station_subtitle: str = "分享一首歌，留一句话"
     page_title: str = ""
     notice: str = ""
@@ -66,12 +66,24 @@ class Config:
     search_cache_ttl_sec: int = 900
     background_interval_sec: int = 300
     background_max_bytes: int = 8 * 1024 * 1024
+    upload_max_bytes: int = 64 * 1024 * 1024
+    upload_retention_sec: int = 86_400
+    upload_offline_grace_sec: int = 60
+    upload_delete_after_play: bool = True
+    upload_cleanup_interval_sec: int = 15
+    transcode_bitrate_kbps: int = 128
+    transcode_mp3: bool = True
+    ffmpeg_path: str = "ffmpeg"
+    http_leaf_max: int = 4
+    http_leaf_ttl_sec: int = 20
     listener_ttl_sec: int = 30
     banned_words: tuple[str, ...] = field(default_factory=tuple)
     default_duration_ms: int = 240_000
+    track_preroll_ms: int = 3_000
     poll_interval_sec: float = 0.5
     upstream_timeout: float = 8.0
     upstream_retries: int = 2
+    mesh_stun: str = ""
     user_agent: str = (
         "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
@@ -95,7 +107,7 @@ class Config:
             data_dir=data_dir,
             db_path=db_path,
             static_dir=Path(_text(source, "RADIO_STATIC_DIR", str(BASE_DIR / "app" / "static"))),
-            station_name=_text(source, "RADIO_STATION_NAME", "我的电台"),
+            station_name=_text(source, "RADIO_STATION_NAME", "猫娘电台"),
             station_subtitle=_text(
                 source, "RADIO_STATION_SUBTITLE", "分享一首歌，留一句话"
             ),
@@ -120,6 +132,7 @@ class Config:
             ),
             banned_words=_csv(source, "RADIO_BANNED_WORDS", ()),
             default_duration_ms=_int(source, "RADIO_DEFAULT_DURATION_MS", 240_000),
+            track_preroll_ms=_int(source, "RADIO_TRACK_PREROLL_MS", 3_000),
             poll_interval_sec=_float(source, "RADIO_POLL_INTERVAL", 0.5),
             search_limit=_int(source, "RADIO_SEARCH_LIMIT", 5),
             search_results_limit=_int(source, "RADIO_SEARCH_RESULTS", 12),
@@ -128,9 +141,32 @@ class Config:
             background_max_bytes=_int(
                 source, "RADIO_BG_MAX_BYTES", 8 * 1024 * 1024
             ),
+            upload_max_bytes=_int(
+                source, "RADIO_UPLOAD_MAX_BYTES", 64 * 1024 * 1024
+            ),
+            upload_retention_sec=_int(
+                source, "RADIO_UPLOAD_RETENTION_SEC", 86_400
+            ),
+            upload_offline_grace_sec=_int(
+                source, "RADIO_UPLOAD_OFFLINE_GRACE_SEC", 60
+            ),
+            upload_delete_after_play=(
+                _int(source, "RADIO_UPLOAD_DELETE_AFTER_PLAY", 1) != 0
+            ),
+            upload_cleanup_interval_sec=_int(
+                source, "RADIO_UPLOAD_CLEANUP_INTERVAL", 15
+            ),
+            transcode_bitrate_kbps=_int(
+                source, "RADIO_TRANSCODE_BITRATE", 128
+            ),
+            transcode_mp3=(_int(source, "RADIO_TRANSCODE_MP3", 1) != 0),
+            ffmpeg_path=_text(source, "RADIO_FFMPEG", "ffmpeg"),
+            http_leaf_max=_int(source, "RADIO_HTTP_LEAF_MAX", 4),
+            http_leaf_ttl_sec=_int(source, "RADIO_HTTP_LEAF_TTL", 20),
             listener_ttl_sec=_int(source, "RADIO_LISTENER_TTL", 30),
             upstream_timeout=_float(source, "RADIO_UPSTREAM_TIMEOUT", 8.0),
             upstream_retries=_int(source, "RADIO_UPSTREAM_RETRIES", 2),
+            mesh_stun=_text(source, "RADIO_MESH_STUN", ""),
             user_agent=_text(source, "RADIO_USER_AGENT", cls.user_agent),
             netease_search_url=_text(
                 source, "RADIO_NETEASE_SEARCH_URL", "https://music.163.com/api/search/get/web"
@@ -151,7 +187,12 @@ class Config:
     def backgrounds_dir(self) -> Path:
         return self.data_dir / "backgrounds"
 
+    @property
+    def uploads_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.backgrounds_dir.mkdir(parents=True, exist_ok=True)
+        self.uploads_dir.mkdir(parents=True, exist_ok=True)

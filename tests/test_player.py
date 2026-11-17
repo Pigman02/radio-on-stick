@@ -98,7 +98,8 @@ class PlayerTests(unittest.TestCase):
         snapshot = self.player.snapshot()
         self.assertEqual(snapshot["track"]["id"], "t1")
         self.assertEqual(snapshot["position_ms"], 0)
-        self.assertEqual(snapshot["audio"]["direct"], "http://audio/t1")
+        self.assertEqual(snapshot["audio"]["direct"], "/native/t1")
+        self.assertEqual(snapshot["audio"]["upstream"], "http://audio/t1")
 
         self.clock.advance(5)
         snapshot = self.player.snapshot()
@@ -107,7 +108,8 @@ class PlayerTests(unittest.TestCase):
     def test_initial_refresh_bumps_audio_rev(self):
         self.player.advance("test")
         snapshot = self.player.snapshot(ensure=False)
-        self.assertEqual(snapshot["audio"]["direct"], "http://audio/t1")
+        self.assertEqual(snapshot["audio"]["direct"], "/native/t1")
+        self.assertEqual(snapshot["audio"]["upstream"], "http://audio/t1")
         self.assertEqual(snapshot["audio_rev"], 1)
 
     def test_queued_playlist_track_is_not_repeated(self):
