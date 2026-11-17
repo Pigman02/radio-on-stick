@@ -53,6 +53,8 @@ class Config:
     queue_max: int = 20
     duplicate_window_sec: int = 1800
     message_max_len: int = 200
+    message_display_limit: int = 100
+    message_keep_limit: int = 200
     nickname_max_len: int = 16
     min_form_ms: int = 1200
     report_limit_per_min: int = 10
@@ -120,6 +122,8 @@ class Config:
             queue_max=_int(source, "RADIO_QUEUE_MAX", 20),
             duplicate_window_sec=_int(source, "RADIO_DUPLICATE_WINDOW", 1800),
             message_max_len=_int(source, "RADIO_MESSAGE_MAX", 200),
+            message_display_limit=_int(source, "RADIO_MESSAGE_DISPLAY", 100),
+            message_keep_limit=_int(source, "RADIO_MESSAGE_KEEP", 200),
             nickname_max_len=_int(source, "RADIO_NICK_MAX", 16),
             min_form_ms=_int(source, "RADIO_MIN_FORM_MS", 1200),
             report_limit_per_min=_int(source, "RADIO_REPORT_PER_MIN", 10),

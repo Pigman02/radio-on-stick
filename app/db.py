@@ -165,14 +165,15 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
-            # Keep only the newest row per (IP, track), then enforce it.
+            # History is station-wide and keeps only the newest request per track.
+            self._conn.execute("DROP INDEX IF EXISTS idx_request_history_unique")
             self._conn.execute(
                 "DELETE FROM request_history WHERE id NOT IN "
-                "(SELECT MAX(id) FROM request_history GROUP BY ip_key, track_id)"
+                "(SELECT MAX(id) FROM request_history GROUP BY track_id)"
             )
             self._conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_request_history_unique "
-                "ON request_history(ip_key, track_id)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_request_history_track_unique "
+                "ON request_history(track_id)"
             )
             self._conn.commit()
 
@@ -697,25 +698,14 @@ class Database:
         cur = self._execute(
             "INSERT INTO request_history(ip_key, track_id, nickname, created_at) "
             "VALUES(?, ?, ?, ?) "
-            "ON CONFLICT(ip_key, track_id) DO UPDATE SET "
-            "nickname = excluded.nickname, created_at = excluded.created_at",
+            "ON CONFLICT(track_id) DO UPDATE SET "
+            "ip_key = excluded.ip_key, nickname = excluded.nickname, "
+            "created_at = excluded.created_at",
             (ip_key, track_id, nickname, int(created_at or now_ms())),
         )
         return int(cur.lastrowid or 0)
 
-    def list_request_history(self, ip_key: str, limit: int = 30) -> list[dict[str, Any]]:
-        rows = self._fetchall(
-            "SELECT h.id, h.track_id, h.nickname, h.created_at, "
-            "t.title, t.artist, t.album, t.duration_ms, t.cover_url, t.source, "
-            "t.duration_estimated "
-            "FROM request_history h JOIN tracks t ON t.id = h.track_id "
-            "WHERE h.ip_key = ? ORDER BY h.created_at DESC, h.id DESC LIMIT ?",
-            (ip_key, max(1, int(limit))),
-        )
-        return [dict(row) for row in rows]
-
-    def list_recent_request_history(self, limit: int = 30) -> list[dict[str, Any]]:
-        """Shared request history: every listener sees the same recent rows."""
+    def list_request_history(self, limit: int = 50) -> list[dict[str, Any]]:
         rows = self._fetchall(
             "SELECT h.id, h.track_id, h.nickname, h.created_at, "
             "t.title, t.artist, t.album, t.duration_ms, t.cover_url, t.source, "
@@ -725,6 +715,19 @@ class Database:
             (max(1, int(limit)),),
         )
         return [dict(row) for row in rows]
+
+    def trim_messages(self, keep: int) -> None:
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "DELETE FROM messages WHERE id NOT IN "
+                    "(SELECT id FROM messages ORDER BY id DESC LIMIT ?)",
+                    (max(1, int(keep)),),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def add_rate_event(self, key: str, action: str, ts: int) -> None:
         self._execute(

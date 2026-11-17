@@ -52,7 +52,9 @@ data/           运行时数据（gitignored）
 - `app/uploads.py`：上传音频的生命周期清理（默认播放结束即删除；遗留模式可配置上传者离线宽限；硬保留期清理；只删除应用命名的临时文件）。
 - `app/mesh.py`：标准库 RFC6455 WebSocket `/ws`、种子/父子拓扑、双上行分配、显式种子替换、不可中继叶子、断线重挂。
 - `app/static/mesh.js`：种子 `/source` 取块、DataChannel 原样转发、`(stream_id, seq)` 去重、MSE 多格式播放、时间戳同步、HTTP 叶子/服务器 `/native` 兜底。
-- 点歌历史按 `(IP, track_id)` 唯一，重复点歌只更新时间，不新增行；待播放请求可由本人取消，不能取消别人的请求。
+- 点歌历史由服务器全局维护，按 `track_id` 唯一；重复点歌只更新时间，不新增行；待播放请求可由本人取消，不能取消别人的请求。
+- 留言默认保留 200 条、页面显示 100 条；播放列表/历史/留言使用固定高度容器内部滚动。
+- Nginx 访问白名单在 `/etc/nginx/snippets/radio-allow.conf`；安装脚本升级时必须保留，不要写回站点配置。
 - `app/static/admin.js`：`/admin` 复用客户端壳，叠加管理控制台（队列/曲目库/策略/页面背景/留言）。
 - `app/policy.py`：上传/第三方 MP3 限制、网络白名单、最大听众、点歌/上传/留言开关。
 - `deploy/nginx-radio.conf`：TLS、反向代理、限流、私网访问控制。
