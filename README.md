@@ -242,3 +242,4 @@ sudo bash deploy/install.sh
 - 所有音频默认用 ffmpeg 转成低码率 MP3，再按 MP3 帧切块分发；`RADIO_TRANSCODE_MP3=0` 可关闭 MP3 重编码；转码失败才由 HTTP 叶子或 `/native` 兜底。
 - WebRTC 在私网/Tailscale 内通常可直接建立；跨公网时设置 `RADIO_MESH_STUN`（例如 `stun:stun.l.google.com:19302`），否则可能在 9 秒后转为 HTTP 叶子。
 - 第三方音源请自行确认合规性。
+- Go Station 重构入口见 `station-go/`
