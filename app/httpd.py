@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import http.cookies
 import ipaddress
 import json
 import logging
@@ -21,6 +22,7 @@ from .app import RadioApp
 from .community import LeafAdmission
 from .db import now_ms
 from .ffmpeg import ffmpeg_status
+from .join import COOKIE_NAME, make_token, verify_token
 from .mesh import MeshHub, accept_websocket
 from .media_meta import probe_uploaded_audio
 from .policy import PolicyError, load_policy, save_policy
@@ -205,6 +207,10 @@ class RadioServer(ThreadingHTTPServer):
             self._workers.release()
 
 
+class JoinRedirect(Exception):
+    pass
+
+
 class RadioHandler(BaseHTTPRequestHandler):
     server_version = "Radio/0.10"
     protocol_version = "HTTP/1.1"
@@ -327,6 +333,63 @@ class RadioHandler(BaseHTTPRequestHandler):
     def _ip_key(self) -> str:
         return make_ip_key(self._client_ip(), self.app.config.ip_hash_salt)
 
+    def _join_cookie_valid(self) -> bool:
+        directory = self.app.directory
+        if directory is None:
+            return False
+        try:
+            cookies = http.cookies.SimpleCookie(self.headers.get("Cookie") or "")
+            morsel = cookies.get(COOKIE_NAME)
+            token = morsel.value if morsel is not None else ""
+        except (http.cookies.CookieError, KeyError):
+            return False
+        return bool(token) and verify_token(
+            self.app.config, token, directory.invite_code()
+        )
+
+    def _set_join_cookie(self, token: str) -> None:
+        secure = (
+            self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+            or self.headers.get("X-Forwarded-Ssl", "").lower() == "on"
+        )
+        parts = [
+            f"{COOKIE_NAME}={token}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            f"Max-Age={max(60, int(self.app.config.join_ttl_sec))}",
+        ]
+        if secure:
+            parts.append("Secure")
+        self.send_header("Set-Cookie", "; ".join(parts))
+
+    def _handle_join(self) -> None:
+        data = self._read_json()
+        code = str(data.get("code") or "")
+        directory = self.app.directory
+        if directory is None or not directory.enabled:
+            raise ApiError(503, "join_disabled", "电台未配置邀请码")
+        decision = self.app.limiter.consume_search(self._ip_key())
+        if not decision.allowed:
+            raise ApiError(
+                429,
+                "join_rate_limited",
+                "尝试过多，请稍后再试",
+                retry_after=decision.retry_after,
+            )
+        if not directory.verify_invite(code):
+            raise ApiError(403, "invalid_code", "邀请码无效")
+        body = b'{"ok":true}'
+        token = make_token(self.app.config, code)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self._set_join_cookie(token)
+        self.end_headers()
+        self.wfile.write(body)
+
     def _enforce_client_access(self, path: str) -> None:
         if path == "/healthz" or path in {"/admin", "/admin/"}:
             return
@@ -343,8 +406,19 @@ class RadioHandler(BaseHTTPRequestHandler):
             "/placeholder.svg",
             "/manifest.webmanifest",
             "/sw.js",
+            "/join",
+            "/join.html",
+            "/join.js",
         }:
             return
+        if path in {"/api/join", "/api/config", "/favicon.ico"}:
+            return
+        if self.app.config.join_required:
+            if self._join_cookie_valid():
+                return
+            if path in {"/", "/index.html"}:
+                raise JoinRedirect("/join")
+            raise ApiError(401, "join_required", "请输入邀请码加入电台")
         policy = load_policy(self.app.db)
         # IP admission is deliberately owned by the Nginx allow-list
         # (/etc/nginx/snippets/radio-allow.conf), matching Pigman02's design.
@@ -523,6 +597,13 @@ class RadioHandler(BaseHTTPRequestHandler):
         try:
             self._enforce_client_access(parsed_path)
             self._dispatch_get()
+        except JoinRedirect as exc:
+            self.send_response(302)
+            self.send_header("Location", str(exc))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         except ApiError as exc:
             self._send_error_json(exc.status, exc.code, exc.message, exc.retry_after, exc.extra)
         except (BrokenPipeError, ConnectionResetError):
@@ -587,6 +668,12 @@ class RadioHandler(BaseHTTPRequestHandler):
                 200,
                 {"ok": True, "listeners": len(items), "items": items},
             )
+            return
+        if path == "/join":
+            self._send_file(self.app.config.static_dir / "join.html", cache_sec=0)
+            return
+        if path == "/api/join":
+            self._send_json(200, {"ok": True, "join_required": True})
             return
         if path == "/api/config":
             self._send_json(200, self._public_config())
@@ -743,6 +830,9 @@ class RadioHandler(BaseHTTPRequestHandler):
 
     def _dispatch_post(self) -> None:
         path = urllib.parse.urlsplit(self.path).path
+        if path == "/api/join":
+            self._handle_join()
+            return
         if path == "/api/admin/directory/rotate":
             self._require_admin()
             if self.app.directory is None or not self.app.directory.enabled:

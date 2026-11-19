@@ -53,7 +53,7 @@
         station.station_id,
       ].filter(Boolean).join(" · ");
       if (stationUrl) {
-        enter.href = stationUrl;
+        enter.href = `${stationUrl.replace(/\/$/, "")}/join#${encodeURIComponent(code)}`;
         enter.classList.remove("hidden");
       } else {
         enter.classList.add("hidden");

@@ -101,6 +101,8 @@ class Config:
     directory_register_token: str = ""
     directory_public_url: str = ""
     directory_heartbeat_sec: int = 300
+    join_required: bool = False
+    join_ttl_sec: int = 604800
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Config":
@@ -197,6 +199,8 @@ class Config:
                 source, "RADIO_DIRECTORY_PUBLIC_URL", ""
             ).rstrip("/"),
             directory_heartbeat_sec=_int(source, "RADIO_DIRECTORY_HEARTBEAT", 300),
+            join_required=(_int(source, "RADIO_JOIN_REQUIRED", 0) != 0),
+            join_ttl_sec=_int(source, "RADIO_JOIN_TTL", 604800),
         )
 
     @property

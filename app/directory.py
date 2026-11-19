@@ -119,6 +119,18 @@ class DirectoryClient:
         with self._lock:
             return self._status_locked(include_code)
 
+    def invite_code(self) -> str:
+        with self._lock:
+            return self._invite_code
+
+    def verify_invite(self, raw: str) -> bool:
+        supplied = normalize_code(raw)
+        with self._lock:
+            expected = normalize_code(self._invite_code)
+        if not supplied or not expected:
+            return False
+        return secrets.compare_digest(supplied, expected)
+
     def _request(self, path: str, payload: dict[str, Any], method: str = "POST") -> dict[str, Any]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
