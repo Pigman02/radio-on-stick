@@ -38,7 +38,7 @@ def _csv(env: Mapping[str, str], key: str, default: tuple[str, ...]) -> tuple[st
 @dataclass(frozen=True)
 class Config:
     host: str = "127.0.0.1"
-    port: int = 8080
+    port: int = 8090
     data_dir: Path = BASE_DIR / "data"
     db_path: Path = BASE_DIR / "data" / "radio.db"
     static_dir: Path = BASE_DIR / "app" / "static"
@@ -111,7 +111,7 @@ class Config:
         db_path = Path(_text(source, "RADIO_DB_PATH", str(data_dir / "radio.db")))
         return cls(
             host=_text(source, "RADIO_HOST", "127.0.0.1"),
-            port=_int(source, "RADIO_PORT", 8080),
+            port=_int(source, "RADIO_PORT", 8090),
             data_dir=data_dir,
             db_path=db_path,
             static_dir=Path(_text(source, "RADIO_STATIC_DIR", str(BASE_DIR / "app" / "static"))),

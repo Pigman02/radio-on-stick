@@ -5054,3 +5054,25 @@ button.listener-pill:hover {
   font-weight: 700;
   flex: 0 0 auto;
 }
+
+/* Unified nickname + admin entry */
+.nickname-admin {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nickname-admin-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+.nickname-admin input {
+  width: 100%;
+}
+.nickname-admin .ghost-btn {
+  align-self: flex-start;
+}

@@ -46,10 +46,10 @@ sudo bash deploy/install.sh
 ```bash
 systemctl status radio-on-stick
 journalctl -u radio-on-stick -n 50 --no-pager
-curl -s http://127.0.0.1:8080/healthz
+curl -s http://127.0.0.1:8090/healthz
 curl -sI http://127.0.0.1/
 curl -k -sI https://127.0.0.1/
-curl -s http://127.0.0.1:8080/mesh.json
+curl -s http://127.0.0.1:8090/mesh.json
 ```
 
 从 Tailscale 或局域网设备打开主页，设置昵称，搜索并点歌。
@@ -86,7 +86,7 @@ tail -f /var/log/nginx/radio.access.log
 
 ```bash
 python3 /opt/radio-on-stick/tools/radioctl.py \
-  --base http://127.0.0.1:8080 \
+  --base http://127.0.0.1:8090 \
   --token '<管理 token>' \
   add 'Iron Lotus Mili'
 ```

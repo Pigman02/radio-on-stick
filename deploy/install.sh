@@ -55,7 +55,7 @@ else
   SALT="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
   cat >"${ENV_FILE}" <<EOF
 RADIO_HOST=127.0.0.1
-RADIO_PORT=8080
+RADIO_PORT=8090
 RADIO_DATA_DIR=${DATA_DIR}
 RADIO_STATION_NAME=猫娘电台
 RADIO_LOG_LEVEL=INFO
@@ -134,7 +134,7 @@ OK=0
 for _ in $(seq 1 30); do
   if python3 - <<'PY' >/dev/null 2>&1
 import urllib.request
-urllib.request.urlopen("http://127.0.0.1:8080/healthz", timeout=2).read()
+urllib.request.urlopen("http://127.0.0.1:8090/healthz", timeout=2).read()
 PY
   then
     OK=1

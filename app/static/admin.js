@@ -128,6 +128,18 @@
     status.id = "adminStatus";
     status.dataset.state = "offline";
     headActions.appendChild(status);
+    const nickname = el("button", "ghost-btn", "改昵称");
+    nickname.id = "adminNicknameBtn";
+    nickname.type = "button";
+    nickname.addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent("radio:open-nickname"));
+    });
+    headActions.appendChild(nickname);
+    const exit = el("button", "ghost-btn", "退出管理员");
+    exit.id = "adminExitBtn";
+    exit.type = "button";
+    exit.addEventListener("click", logout);
+    headActions.appendChild(exit);
     const close = el("button", "icon-btn");
     close.type = "button";
     close.setAttribute("aria-label", "关闭管理控制台");
@@ -221,6 +233,63 @@
       return Boolean(data && data.owner);
     } catch (_) {
       return false;
+    }
+  }
+
+  async function openWithToken(token) {
+    state.token = String(token || "").trim();
+    state.owner = false;
+    if (!state.token) return false;
+    buildConsole();
+    const overlay = $("adminConsole");
+    overlay.classList.remove("hidden");
+    document.body.classList.add("admin-console-open");
+    try {
+      state.data = await api("/api/admin/state");
+      sessionSet(K_TOKEN, state.token);
+      showPanelView();
+      setStatus("live", "已连接");
+      renderAll();
+      startPolling();
+      return true;
+    } catch (_) {
+      state.token = "";
+      closeConsole();
+      return false;
+    }
+  }
+
+  async function openOwner() {
+    state.token = "";
+    state.owner = true;
+    buildConsole();
+    const overlay = $("adminConsole");
+    overlay.classList.remove("hidden");
+    document.body.classList.add("admin-console-open");
+    try {
+      state.data = await api("/api/admin/state");
+      showPanelView();
+      setStatus("live", "本机管理员");
+      renderAll();
+      startPolling();
+      return true;
+    } catch (_) {
+      state.owner = false;
+      closeConsole();
+      return false;
+    }
+  }
+
+  function logout() {
+    state.token = "";
+    state.owner = false;
+    state.data = null;
+    sessionSet(K_TOKEN, null);
+    stopPolling();
+    closeConsole();
+    document.documentElement.classList.remove("admin-mode");
+    if (IS_ADMIN_PAGE) {
+      history.replaceState({}, "", "/");
     }
   }
 
@@ -844,8 +913,15 @@
     }
   }
 
+  window.RadioAdmin = {
+    openWithToken,
+    openOwner,
+    logout,
+    close: closeConsole,
+    isOpen: () => Boolean($("adminConsole") && !$("adminConsole").classList.contains("hidden")),
+  };
+
   /* ---------- boot ---------- */
-  addTopbarButton();
   state.token = sessionGet(K_TOKEN) || "";
   buildConsole();
   document.addEventListener("click", (event) => {
@@ -855,17 +931,19 @@
       login();
     }
   });
-  if (state.token) {
-    loadState();
-  } else {
-    detectOwner().then((owner) => {
-      if (owner) {
-        state.owner = true;
-        openConsole(false);
-      } else {
-        openConsole(true);
-      }
-    });
+  if (IS_ADMIN_PAGE) {
+    if (state.token) {
+      loadState();
+    } else {
+      detectOwner().then((owner) => {
+        if (owner) {
+          state.owner = true;
+          openConsole(false);
+        } else {
+          openConsole(true);
+        }
+      });
+    }
   }
   document.addEventListener("input", (event) => {
     if (event.target && event.target.closest("#adminConsole")) state.dirty = true;

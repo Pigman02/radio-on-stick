@@ -444,3 +444,6 @@ html[data-theme="light"] .admin-console button.primary-btn {
   background: linear-gradient(145deg, #ffd08d, var(--accent));
   color: #171106;
 }
+
+/* The nickname modal is opened from inside the admin console. */
+body.admin-console-open .modal { z-index: 140; }

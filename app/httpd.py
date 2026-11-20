@@ -330,6 +330,17 @@ class RadioHandler(BaseHTTPRequestHandler):
                     pass
         return peer
 
+    def _is_local_owner(self) -> bool:
+        try:
+            if not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                return False
+        except ValueError:
+            return False
+        return not (
+            self.headers.get("X-Real-IP")
+            or self.headers.get("X-Forwarded-For")
+        )
+
     def _ip_key(self) -> str:
         return make_ip_key(self._client_ip(), self.app.config.ip_hash_salt)
 
@@ -414,7 +425,7 @@ class RadioHandler(BaseHTTPRequestHandler):
         if path in {"/api/join", "/api/config", "/favicon.ico"}:
             return
         if self.app.config.join_required:
-            if self._join_cookie_valid():
+            if self._is_local_owner() or self._join_cookie_valid():
                 return
             if path in {"/", "/index.html"}:
                 raise JoinRedirect("/join")

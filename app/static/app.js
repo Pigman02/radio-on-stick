@@ -93,6 +93,9 @@ const nicknameModal = $("nicknameModal");
 const nicknameInput = $("nicknameInput");
 const nicknameSave = $("nicknameSave");
 const nicknameStatus = $("nicknameStatus");
+const adminTokenInline = $("adminTokenInline");
+const adminLoginInline = $("adminLoginInline");
+const adminInlineStatus = $("adminInlineStatus");
 const listenersModal = $("listenersModal");
 const listenersList = $("listenersList");
 const listenersSummary = $("listenersSummary");
@@ -232,9 +235,22 @@ function cookieGet(name) {
   return "";
 }
 
+function sharedCookieDomain() {
+  const host = String(location.hostname || "");
+  if (!host || host === "localhost" || host.includes(":") || /^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    return "";
+  }
+  if (host.endsWith(".sslip.io")) return "; Domain=.sslip.io";
+  const parts = host.split(".");
+  if (parts.length >= 3) return `; Domain=.${parts.slice(-2).join(".")}`;
+  return "";
+}
+
 function cookieSet(name, value, maxAge = 31_536_000) {
   try {
-    document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; max-age=${maxAge}; path=/; SameSite=Lax`;
+    const domain = sharedCookieDomain();
+    const secure = location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; max-age=${maxAge}; path=/; SameSite=Lax${domain}${secure}`;
   } catch (_) {
     /* ignore */
   }
@@ -878,8 +894,8 @@ async function addLocalBackgroundFiles(files) {
 
 function loadNickname() {
   state.nickname = (
-    storageGet("radio.nickname") ||
     cookieGet("radio_nickname") ||
+    storageGet("radio.nickname") ||
     ""
   ).trim();
   if (state.nickname) {
@@ -902,6 +918,7 @@ function updateNicknameUI() {
 function openNicknameModal() {
   nicknameInput.value = state.nickname;
   nicknameStatus.textContent = "";
+  if (adminInlineStatus) adminInlineStatus.textContent = "";
   showModal(nicknameModal);
   setTimeout(() => nicknameInput.focus(), 50);
 }
@@ -932,6 +949,38 @@ function saveNickname() {
     uploadLocalAudio(file);
   }
 }
+
+async function loginAdminInline() {
+  if (!adminLoginInline || !adminTokenInline || !adminInlineStatus) return;
+  const token = adminTokenInline.value.trim();
+  adminLoginInline.disabled = true;
+  adminInlineStatus.textContent = "正在验证…";
+  adminInlineStatus.dataset.tone = "";
+  try {
+    await loadAdminExtension();
+    if (!window.RadioAdmin) throw new Error("管理员模块未加载");
+    const ok = token
+      ? await window.RadioAdmin.openWithToken(token)
+      : await window.RadioAdmin.openOwner();
+    if (!ok) {
+      adminInlineStatus.textContent = token ? "管理 token 无效" : "需要管理 token";
+      adminInlineStatus.dataset.tone = "error";
+      return;
+    }
+    adminTokenInline.value = "";
+    adminInlineStatus.textContent = "";
+    hideModal(nicknameModal);
+  } catch (_) {
+    adminInlineStatus.textContent = "管理员模块不可用";
+    adminInlineStatus.dataset.tone = "error";
+  } finally {
+    adminLoginInline.disabled = false;
+  }
+}
+
+window.addEventListener("radio:open-nickname", () => {
+  openNicknameModal();
+});
 
 /* ---------- player ---------- */
 
@@ -2928,6 +2977,10 @@ nicknameSave.addEventListener("click", saveNickname);
 nicknameInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") saveNickname();
 });
+adminLoginInline.addEventListener("click", loginAdminInline);
+adminTokenInline.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loginAdminInline();
+});
 
 searchForm.addEventListener("submit", performSearch);
 libraryBtn.addEventListener("click", () => {
@@ -3013,17 +3066,25 @@ function registerAppShell() {
   });
 }
 
+let adminExtensionPromise = null;
+
 function loadAdminExtension() {
-  if (document.getElementById("adminExtensionScript")) return;
+  if (document.getElementById("adminExtensionScript")) return Promise.resolve();
+  if (adminExtensionPromise) return adminExtensionPromise;
   const style = document.createElement("link");
   style.rel = "stylesheet";
-  style.href = "/admin.css?v=8";
+  style.href = "/admin.css?v=9";
   style.id = "adminExtensionStyle";
   document.head.appendChild(style);
   const script = document.createElement("script");
-  script.src = "/admin.js?v=23";
+  script.src = "/admin.js?v=25";
   script.id = "adminExtensionScript";
-  document.body.appendChild(script);
+  adminExtensionPromise = new Promise((resolve, reject) => {
+    script.onload = resolve;
+    script.onerror = reject;
+    document.body.appendChild(script);
+  });
+  return adminExtensionPromise;
 }
 
 /* ---------- init ---------- */
@@ -3063,7 +3124,7 @@ loadSidebar();
 
 // Do not force the nickname dialog on every visit.  It opens only when
 // the user taps the profile button or starts an action that needs it.
-if (IS_ADMIN_PAGE) loadAdminExtension();
+loadAdminExtension();
 registerAppShell();
 
 setInterval(() => {

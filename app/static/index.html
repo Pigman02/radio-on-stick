@@ -205,6 +205,12 @@
       <h2 id="nicknameTitle">起个昵称喵</h2>
       <input id="nicknameInput" maxlength="16" autocomplete="nickname">
       <p id="nicknameStatus" class="form-status" role="status"></p>
+      <div class="nickname-admin">
+        <p class="nickname-admin-title">管理员入口</p>
+        <input id="adminTokenInline" type="password" maxlength="200" autocomplete="off" placeholder="管理 token（服务器本机可留空）">
+        <button id="adminLoginInline" class="ghost-btn" type="button">进入管理员面板</button>
+        <p id="adminInlineStatus" class="form-status" role="status"></p>
+      </div>
       <div class="modal-actions">
         <button id="nicknameSave" class="icon-btn" type="button" aria-label="保存昵称" title="保存昵称">
           <svg class="icon stroke-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.2 4.2L19 7"/></svg>
@@ -249,6 +255,6 @@
   </div>
 
   <script src="/mesh.js?v=9"></script>
-  <script src="/app.js?v=63"></script>
+  <script src="/app.js?v=64"></script>
 </body>
 </html>
