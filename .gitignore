@@ -74,3 +74,6 @@ docs/screenshots/
 deploy/macos-campus-*.sh
 deploy/refresh-cernet-allow.py
 prototype/
+
+# Private commercial-source implementations (included in release packages only)
+app/sources/private_impl/
