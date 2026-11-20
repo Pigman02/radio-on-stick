@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net"
@@ -36,8 +38,11 @@ type api struct {
 	uploadsDir string
 	directory  *directory.Client
 	joinRequired bool
-	joinSecret string
-	plugins    *plugins.Client
+	joinSecret   string
+	plugins      *plugins.Client
+	backgroundsDir string
+	backgroundMu sync.Mutex
+	backgroundURLs []string
 }
 
 func env(key, fallback string) string {
@@ -142,9 +147,31 @@ func (a *api) stateJSON(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a.state.State())
 }
 
+func (a *api) backgroundItems() []map[string]any {
+	items := []map[string]any{}
+	entries, _ := os.ReadDir(a.backgroundsDir)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
+			continue
+		}
+		items = append(items, map[string]any{"name": name, "url": "/backgrounds/" + name, "type": "local"})
+	}
+	a.backgroundMu.Lock()
+	for _, url := range a.backgroundURLs {
+		items = append(items, map[string]any{"name": url, "url": url, "type": "network"})
+	}
+	a.backgroundMu.Unlock()
+	return items
+}
+
 func (a *api) config(w http.ResponseWriter, r *http.Request) {
 	settings := a.state.Settings()
-	settings["backgrounds"] = []any{}
+	settings["backgrounds"] = a.backgroundItems()
 	writeJSON(w, 200, settings)
 }
 
@@ -313,7 +340,7 @@ func (a *api) secure(next http.Handler) http.Handler {
 		"/api/join": true, "/admin": true, "/admin/": true,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !a.joinRequired || public[r.URL.Path] || strings.HasPrefix(r.URL.Path, "/api/admin/") || a.validJoin(r) {
+		if !a.joinRequired || public[r.URL.Path] || strings.HasPrefix(r.URL.Path, "/api/admin/") || strings.HasPrefix(r.URL.Path, "/backgrounds/") || a.validJoin(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -323,6 +350,90 @@ func (a *api) secure(next http.Handler) http.Handler {
 		}
 		writeJSON(w, 401, map[string]any{"error": "join_required", "message": "请输入邀请码加入电台"})
 	})
+}
+
+func (a *api) adminBackground(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	mime := strings.ToLower(strings.Split(r.Header.Get("Content-Type"), ";")[0])
+	ext := map[string]string{"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[mime]
+	if ext == "" {
+		writeJSON(w, 400, map[string]any{"error": "bad_image"})
+		return
+	}
+	random := make([]byte, 16)
+	_, _ = rand.Read(random)
+	name := hex.EncodeToString(random) + ext
+	file, err := os.Create(filepath.Join(a.backgroundsDir, name))
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": "open_failed"})
+		return
+	}
+	n, err := io.Copy(file, io.LimitReader(r.Body, 16*1024*1024))
+	_ = file.Close()
+	if err != nil || n == 0 {
+		_ = os.Remove(filepath.Join(a.backgroundsDir, name))
+		writeJSON(w, 400, map[string]any{"error": "upload_failed"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "name": name, "url": "/backgrounds/" + name})
+}
+
+func (a *api) adminBackgroundDelete(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var body struct{ Name string `json:"name"` }
+	if json.NewDecoder(r.Body).Decode(&body) != nil || strings.ContainsAny(body.Name, "/\\") {
+		writeJSON(w, 400, map[string]any{"error": "bad_name"})
+		return
+	}
+	_ = os.Remove(filepath.Join(a.backgroundsDir, body.Name))
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) adminBackgroundURL(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var body struct{ URL string `json:"url"` }
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	parsed, err := url.Parse(body.URL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		writeJSON(w, 400, map[string]any{"error": "bad_url"})
+		return
+	}
+	if r.URL.Path == "/api/admin/background/url/delete" {
+		a.backgroundMu.Lock()
+		for i, item := range a.backgroundURLs {
+			if item == body.URL {
+				a.backgroundURLs = append(a.backgroundURLs[:i], a.backgroundURLs[i+1:]...)
+				break
+			}
+		}
+		a.backgroundMu.Unlock()
+	} else {
+		a.backgroundMu.Lock()
+		a.backgroundURLs = append(a.backgroundURLs, body.URL)
+		a.backgroundMu.Unlock()
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) backgrounds(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/backgrounds/")
+	if strings.ContainsAny(name, "/\\") || name == "" {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(a.backgroundsDir, name))
 }
 
 func (a *api) adminDirectory(w http.ResponseWriter, r *http.Request) {
@@ -479,7 +590,7 @@ func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
 		"now": state["now"], "upcoming": state["upcoming"], "queue": state["queue"],
 		"messages": state["messages"], "history": state["history"],
 		"policy": a.state.Policy(), "settings": a.state.Settings(),
-		"tracks": a.index.List(200), "backgrounds": []any{},
+		"tracks": a.index.List(200), "backgrounds": a.backgroundItems(),
 		"directory": func() any { if a.directory == nil { return map[string]any{"enabled": false} }; return a.directory.Status(true) }(),
 	}
 	writeJSON(w, 200, result)
@@ -657,6 +768,10 @@ func main() {
 			clean = append(clean, strings.TrimSpace(dir))
 		}
 	}
+	backgroundsDir := env("RADIO_GO_BACKGROUNDS", "data/backgrounds")
+	if err := os.MkdirAll(backgroundsDir, 0o755); err != nil {
+		log.Printf("backgrounds dir: %v", err)
+	}
 	uploadsDir := env("RADIO_GO_UPLOADS", "data/uploads")
 	if err := os.MkdirAll(uploadsDir, 0o755); err != nil {
 		log.Printf("uploads dir: %v", err)
@@ -700,6 +815,7 @@ func main() {
 		joinRequired: os.Getenv("RADIO_JOIN_REQUIRED") == "1",
 		joinSecret: env("RADIO_JOIN_SECRET", env("RADIO_GO_ADMIN_TOKEN", "go-join-secret")),
 		plugins:    plugins.New(env("RADIO_PRIVATE_PYTHON", "python3"), env("RADIO_PRIVATE_HELPER", "private/plugins/commercial/helper.py")),
+		backgroundsDir: env("RADIO_GO_BACKGROUNDS", "data/backgrounds"),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
@@ -718,6 +834,11 @@ func main() {
 	mux.HandleFunc("/api/lyrics/", a.lyrics)
 	mux.HandleFunc("/api/admin/state", a.adminState)
 	mux.HandleFunc("/api/admin/directory", a.adminDirectory)
+	mux.HandleFunc("/api/admin/background", a.adminBackground)
+	mux.HandleFunc("/api/admin/background/delete", a.adminBackgroundDelete)
+	mux.HandleFunc("/api/admin/background/url", a.adminBackgroundURL)
+	mux.HandleFunc("/api/admin/background/url/delete", a.adminBackgroundURL)
+	mux.HandleFunc("/backgrounds/", a.backgrounds)
 	mux.HandleFunc("/api/admin/settings", a.adminSettings)
 	mux.HandleFunc("/api/admin/clear-queue", a.adminClearQueue)
 	mux.HandleFunc("/api/admin/queue/delete", a.adminQueueDelete)
