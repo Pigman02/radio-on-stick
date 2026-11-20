@@ -1153,11 +1153,13 @@ func (a *api) queuePin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "bad_json"})
 		return
 	}
-	if !a.state.Pin(body.QueueID) {
+	clientKey := a.touchListener(w, r, "")
+	pinned, ok := a.state.TogglePin(body.QueueID, clientKey)
+	if !ok {
 		writeJSON(w, 404, map[string]any{"error": "not_found"})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"ok": true, "pinned": pinned})
 }
 
 func (a *api) upload(w http.ResponseWriter, r *http.Request) {

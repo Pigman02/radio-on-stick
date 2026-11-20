@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"path/filepath"
 	"sync"
 	"time"
@@ -72,11 +74,14 @@ type QueueEntry struct {
 	Nickname  string `json:"nickname"`
 	Status    string `json:"status"`
 	CreatedAt         int64  `json:"created_at"`
-	PinCount          int    `json:"pin_count"`
-	DurationMS        int64  `json:"duration_ms"`
-	DurationEstimated bool   `json:"duration_estimated"`
-	ClientKey         string `json:"-"`
-	CanCancel         bool   `json:"can_cancel"`
+	PinCount          int      `json:"pin_count"`
+	PinClients        []string `json:"pin_clients,omitempty"`
+	Priority          int      `json:"priority"`
+	PinnedByMe        bool     `json:"pinned_by_me"`
+	DurationMS        int64    `json:"duration_ms"`
+	DurationEstimated bool     `json:"duration_estimated"`
+	ClientKey         string   `json:"-"`
+	CanCancel         bool     `json:"can_cancel"`
 }
 
 type State struct {
@@ -158,6 +163,7 @@ func (s *State) advanceLocked() {
 		return
 	}
 	old := s.current
+	s.reorderQueueLocked()
 	if len(s.queue) == 0 {
 		return
 	}
@@ -290,6 +296,7 @@ func (s *State) Request(track library.Track, nickname, clientKey string) {
 		CreatedAt: time.Now().UnixMilli(), ClientKey: clientKey,
 		DurationMS: track.DurationMS, DurationEstimated: track.DurationMS <= 0,
 	})
+	s.reorderQueueLocked()
 	s.advanceLocked()
 	s.saveLocked()
 }
@@ -418,10 +425,7 @@ func (s *State) SnapshotLocked() map[string]any {
 	// Only requested songs belong to the visible "next"/playlist. The internal
 	// library rotation is not a user request and must not appear as a song
 	// nobody ordered.
-	for _, request := range s.requests {
-		if request.Status != "pending" {
-			continue
-		}
+	for _, request := range s.orderedRequestsLocked() {
 		for _, track := range s.queue {
 			if track.ID == request.TrackID {
 				next = entry(track)
@@ -463,13 +467,21 @@ func (s *State) State(clientKey string) map[string]any {
 	copy(messages, s.messages)
 	history := make([]History, len(s.history))
 	copy(history, s.history)
-	requests := make([]QueueEntry, 0, len(s.requests))
-	for _, entry := range s.requests {
-		if entry.Status != "pending" {
-			continue
+	requests := s.orderedRequestsLocked()
+	for index := range requests {
+		entry := &requests[index]
+		entry.Priority = entry.PinCount
+		entry.PinnedByMe = false
+		for _, client := range entry.PinClients {
+			if client == clientKey && clientKey != "" {
+				entry.PinnedByMe = true
+				break
+			}
 		}
 		entry.CanCancel = entry.ClientKey != "" && entry.ClientKey == clientKey
-		requests = append(requests, entry)
+		// Listener identifiers are only needed for persistence and ownership.
+		// Do not expose other listeners' keys in the public state payload.
+		entry.PinClients = nil
 	}
 	return map[string]any{
 		"now": s.SnapshotLocked(), "upcoming": requests, "queue": requests,
@@ -519,7 +531,15 @@ func (s *State) Cancel(queueID int64, clientKey string) bool {
 	defer s.mu.Unlock()
 	for index, entry := range s.requests {
 		if entry.QueueID == queueID && (entry.ClientKey == "" || entry.ClientKey == clientKey) {
+			trackID := entry.TrackID
 			s.requests = append(s.requests[:index], s.requests[index+1:]...)
+			for trackIndex, track := range s.queue {
+				if track.ID == trackID {
+					s.queue = append(s.queue[:trackIndex], s.queue[trackIndex+1:]...)
+					break
+				}
+			}
+			s.reorderQueueLocked()
 			s.saveLocked()
 			return true
 		}
@@ -532,7 +552,15 @@ func (s *State) CancelAdmin(queueID int64) bool {
 	defer s.mu.Unlock()
 	for index, entry := range s.requests {
 		if entry.QueueID == queueID {
+			trackID := entry.TrackID
 			s.requests = append(s.requests[:index], s.requests[index+1:]...)
+			for trackIndex, track := range s.queue {
+				if track.ID == trackID {
+					s.queue = append(s.queue[:trackIndex], s.queue[trackIndex+1:]...)
+					break
+				}
+			}
+			s.reorderQueueLocked()
 			s.saveLocked()
 			return true
 		}
@@ -540,18 +568,88 @@ func (s *State) CancelAdmin(queueID int64) bool {
 	return false
 }
 
-func (s *State) Pin(queueID int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for index, entry := range s.requests {
-		if entry.QueueID == queueID {
-			entry.PinCount++
-			s.requests = append([]QueueEntry{entry}, append(s.requests[:index], s.requests[index+1:]...)...)
-			s.saveLocked()
-			return true
+func (s *State) orderedRequestsLocked() []QueueEntry {
+	result := make([]QueueEntry, 0, len(s.requests))
+	for _, entry := range s.requests {
+		if entry.Status == "pending" {
+			result = append(result, entry)
 		}
 	}
-	return false
+	sort.SliceStable(result, func(i, j int) bool {
+		left, right := result[i], result[j]
+		if left.PinCount != right.PinCount {
+			return left.PinCount > right.PinCount
+		}
+		if left.QueueID != right.QueueID {
+			return left.QueueID < right.QueueID
+		}
+		return left.CreatedAt < right.CreatedAt
+	})
+	return result
+}
+
+// reorderQueueLocked keeps the playable queue in the same order as the
+// visible request list. Pins do not mutate request order; they only affect
+// the stable sort by unique supporter count.
+func (s *State) reorderQueueLocked() {
+	ordered := s.orderedRequestsLocked()
+	requested := make(map[string]bool, len(ordered))
+	for _, entry := range ordered {
+		requested[entry.TrackID] = true
+	}
+	tracks := make(map[string]library.Track, len(s.queue))
+	rest := make([]library.Track, 0, len(s.queue))
+	for _, track := range s.queue {
+		if requested[track.ID] {
+			if _, exists := tracks[track.ID]; !exists {
+				tracks[track.ID] = track
+			}
+			continue
+		}
+		rest = append(rest, track)
+	}
+	queue := make([]library.Track, 0, len(s.queue))
+	for _, entry := range ordered {
+		if track, ok := tracks[entry.TrackID]; ok {
+			queue = append(queue, track)
+		}
+	}
+	s.queue = append(queue, rest...)
+}
+
+func (s *State) TogglePin(queueID int64, clientKey string) (bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(clientKey) == "" {
+		return false, false
+	}
+	for index := range s.requests {
+		entry := &s.requests[index]
+		if entry.QueueID != queueID || entry.Status != "pending" {
+			continue
+		}
+		pinned := false
+		clients := make([]string, 0, len(entry.PinClients)+1)
+		for _, client := range entry.PinClients {
+			if client == clientKey {
+				pinned = true
+				continue
+			}
+			if client != "" {
+				clients = append(clients, client)
+			}
+		}
+		if !pinned {
+			clients = append(clients, clientKey)
+		}
+		entry.PinClients = clients
+		entry.PinCount = len(clients)
+		entry.Priority = entry.PinCount
+		s.reorderQueueLocked()
+		s.saveLocked()
+		return !pinned, true
+	}
+	return false, false
 }
 
 func (s *State) Vote(client string) (bool, bool) {
@@ -677,6 +775,12 @@ func (s *State) repairMetadataLocked() {
 	for index := range s.queue { fill(&s.queue[index]) }
 	for index := range s.requests {
 		entry := &s.requests[index]
+		if len(entry.PinClients) == 0 && entry.PinCount > 0 {
+			// The old pin implementation only had an anonymous counter and
+			// could not be cancelled by an individual listener.
+			entry.PinCount = 0
+			entry.Priority = 0
+		}
 		if entry.Title == "" || entry.DurationMS == 0 {
 			if item, ok := byID[entry.TrackID]; ok {
 				if entry.Title == "" { entry.Title = item.Title }

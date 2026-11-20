@@ -2094,9 +2094,9 @@ function renderPlaylist(items) {
     side.appendChild(duration);
 
     if (item.status === "pending" && item.queue_id) {
-      const pins = Number(item.priority) || 0;
+      const pins = Number(item.priority ?? item.pin_count ?? 0) || 0;
       const pinnedByMe = Boolean(item.pinned_by_me);
-      const pin = rowAction(pinnedByMe ? "取消置顶" : "置顶", [
+      const pin = rowAction(pinnedByMe ? "取消顶" : "顶", [
         "M12 19V5",
         "M6 11l6-6 6 6",
         "M5 21h14",
@@ -2105,6 +2105,7 @@ function renderPlaylist(items) {
         const badge = document.createElement("span");
         badge.className = "action-badge";
         badge.textContent = String(pins);
+        badge.title = `${pins} 人顶过`;
         pin.appendChild(badge);
       }
       pin.addEventListener("click", async () => {
@@ -2120,7 +2121,7 @@ function renderPlaylist(items) {
           pollSoon();
         } catch (error) {
           pin.disabled = false;
-          setSearchStatus(errorText(error, "置顶失败"), "error");
+          setSearchStatus(errorText(error, "顶失败"), "error");
         }
       });
       if (item.can_cancel) {
