@@ -5754,3 +5754,14 @@ html[data-theme="light"] .volume-flyout input[type="range"]::-moz-range-thumb {
 .lyrics-panel .lyrics-scroll {
   overscroll-behavior: contain;
 }
+
+/* Center the chat composer's narrowed input instead of leaving all 5% on the right. */
+.chat-page .message-form.live input {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.chat-page .message-form.live .send-btn {
+  right: calc(2.5% + 5px);
+}
