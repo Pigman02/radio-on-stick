@@ -186,7 +186,6 @@
       ["policy", "准入与格式"],
       ["page", "页面与背景"],
       ["directory", "电台目录"],
-      ["access", "访问与部署"],
       ["messages", "留言"],
     ];
     for (const [key, label] of tabDefs) {

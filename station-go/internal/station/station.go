@@ -3,6 +3,7 @@ package station
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"sort"
 	"strings"
@@ -170,8 +171,23 @@ func (s *State) advanceLocked() {
 	if len(s.queue) == 0 {
 		return
 	}
-	s.current = s.queue[0]
-	s.queue = s.queue[1:]
+	nextIndex := 0
+	// Requested songs still play in pin/request order. Once there are no
+	// pending requests, the local library rotation is random instead of
+	// following the alphabetical index order.
+	if len(s.orderedRequestsLocked()) == 0 {
+		nextIndex = rand.Intn(len(s.queue))
+	}
+	s.current = s.queue[nextIndex]
+	s.queue = append(s.queue[:nextIndex], s.queue[nextIndex+1:]...)
+	if s.current.CoverURL == "" {
+		if latest, ok := s.index.Get(s.current.ID); ok {
+			if latest.CoverURL != "" { s.current.CoverURL = latest.CoverURL }
+			if s.current.Title == "" { s.current.Title = latest.Title }
+			if s.current.Artist == "" { s.current.Artist = latest.Artist }
+			if s.current.Album == "" { s.current.Album = latest.Album }
+		}
+	}
 	s.started = time.Now()
 	s.pausedPosition = 0
 	s.seq++
@@ -435,11 +451,20 @@ func (s *State) SnapshotLocked() map[string]any {
 		if source == "" {
 			source = "local"
 		}
+		coverURL := track.CoverURL
+		if coverURL == "" {
+			if latest, ok := s.index.Get(track.ID); ok {
+				coverURL = latest.CoverURL
+				if track.Title == "" { track.Title = latest.Title }
+				if track.Artist == "" { track.Artist = latest.Artist }
+				if track.Album == "" { track.Album = latest.Album }
+			}
+		}
 		direct := "/native/" + track.ID
 		return map[string]any{
 			"id": track.ID, "source": source, "source_id": track.SourceID, "title": track.Title,
 			"artist": track.Artist, "album": track.Album,
-			"duration_ms": track.DurationMS, "cover_url": track.CoverURL,
+			"duration_ms": track.DurationMS, "cover_url": coverURL,
 			"lyrics_url": "/api/lyrics/" + track.ID,
 			"audio": map[string]any{"direct": direct},
 		}

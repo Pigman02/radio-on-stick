@@ -3346,11 +3346,11 @@ function loadAdminExtension() {
   if (adminExtensionPromise) return adminExtensionPromise;
   const style = document.createElement("link");
   style.rel = "stylesheet";
-  style.href = "/admin.css?v=9";
+  style.href = "/admin.css?v=12";
   style.id = "adminExtensionStyle";
   document.head.appendChild(style);
   const script = document.createElement("script");
-  script.src = "/admin.js?v=36";
+  script.src = "/admin.js?v=37";
   script.id = "adminExtensionScript";
   adminExtensionPromise = new Promise((resolve, reject) => {
     script.onload = resolve;

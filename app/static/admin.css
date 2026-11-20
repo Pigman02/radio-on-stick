@@ -447,3 +447,29 @@ html[data-theme="light"] .admin-console button.primary-btn {
 
 /* The nickname modal is opened from inside the admin console. */
 body.admin-console-open .modal { z-index: 140; }
+
+/* Policy checkboxes must stay small, vertically centered and aligned with
+   their labels despite the global admin input styling. */
+.admin-toggle-row {
+  flex-direction: row;
+  align-items: center;
+}
+
+.admin-toggle-row input[type="checkbox"] {
+  flex: 0 0 17px !important;
+  width: 17px !important;
+  max-width: 17px !important;
+  height: 17px !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  accent-color: var(--accent);
+}
+
+.admin-toggle-row span {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
