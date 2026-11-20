@@ -43,6 +43,7 @@ type api struct {
 	backgroundsDir string
 	backgroundMu sync.Mutex
 	backgroundURLs []string
+	backgroundFile string
 	pluginMu      sync.Mutex
 	pluginCache   map[string]plugins.Candidate
 }
@@ -149,6 +150,12 @@ func (a *api) stateJSON(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a.state.State())
 }
 
+func (a *api) saveBackgroundURLsLocked() {
+	raw, _ := json.MarshalIndent(a.backgroundURLs, "", "  ")
+	_ = os.MkdirAll(filepath.Dir(a.backgroundFile), 0o755)
+	_ = os.WriteFile(a.backgroundFile, raw, 0o600)
+}
+
 func (a *api) backgroundItems() []map[string]any {
 	items := []map[string]any{}
 	entries, _ := os.ReadDir(a.backgroundsDir)
@@ -213,11 +220,15 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 			if resolved.DurationMS == 0 {
 				resolved.DurationMS = item.DurationMS
 			}
+			if resolved.CoverURL == "" {
+				resolved.CoverURL = item.CoverURL
+			}
 		}
 		track = library.Track{
 			ID: body.TrackID, Title: resolved.Title, Artist: resolved.Artist,
 			Album: resolved.Album, DurationMS: resolved.DurationMS,
 			URL: resolved.AudioURL, Source: resolved.Source, SourceID: resolved.SourceID,
+			CoverURL: resolved.CoverURL,
 		}
 	} else {
 		local, ok := a.index.Get(body.TrackID)
@@ -434,6 +445,7 @@ func (a *api) adminBackgroundURL(w http.ResponseWriter, r *http.Request) {
 		for i, item := range a.backgroundURLs {
 			if item == body.URL {
 				a.backgroundURLs = append(a.backgroundURLs[:i], a.backgroundURLs[i+1:]...)
+				a.saveBackgroundURLsLocked()
 				break
 			}
 		}
@@ -441,6 +453,7 @@ func (a *api) adminBackgroundURL(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.backgroundMu.Lock()
 		a.backgroundURLs = append(a.backgroundURLs, body.URL)
+		a.saveBackgroundURLsLocked()
 		a.backgroundMu.Unlock()
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -596,7 +609,12 @@ func (a *api) report(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) lyrics(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"lines": []any{}, "source": ""})
+	trackID := strings.TrimPrefix(r.URL.Path, "/api/lyrics/")
+	lrc, translation := "", ""
+	if source, sourceID, found := strings.Cut(trackID, ":"); found && a.plugins != nil {
+		lrc, translation = a.plugins.Lyrics(source, sourceID)
+	}
+	writeJSON(w, 200, map[string]any{"track_id": trackID, "lrc": lrc, "translation": translation})
 }
 
 func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
@@ -808,6 +826,7 @@ func main() {
 		}
 	}
 	state := station.New(index, env("RADIO_STATION_NAME", "Go Radio Station"))
+	state.SetPersistPath(env("RADIO_GO_STATE", "data/station-go-state.json"))
 	state.Rebuild()
 	directoryClient := directory.New(
 		env("RADIO_GO_IDENTITY", "data/station-go-identity.json"),
@@ -838,7 +857,11 @@ func main() {
 		joinSecret: env("RADIO_JOIN_SECRET", env("RADIO_GO_ADMIN_TOKEN", "go-join-secret")),
 		plugins:    plugins.New(env("RADIO_PRIVATE_PYTHON", "python3"), env("RADIO_PRIVATE_HELPER", "private/plugins/commercial/helper.py")),
 		backgroundsDir: env("RADIO_GO_BACKGROUNDS", "data/backgrounds"),
+		backgroundFile: env("RADIO_GO_BACKGROUND_URLS", "data/station-go-backgrounds.json"),
 		pluginCache: map[string]plugins.Candidate{},
+	}
+	if raw, err := os.ReadFile(a.backgroundFile); err == nil {
+		_ = json.Unmarshal(raw, &a.backgroundURLs)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
@@ -885,6 +908,25 @@ func main() {
 	mux.HandleFunc("/api/library/stream/", a.stream)
 	mux.HandleFunc("/api/admin/library/scan", a.scan)
 	addr := env("RADIO_GO_ADDR", "127.0.0.1:8091")
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			entries, err := os.ReadDir(uploadsDir)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasPrefix(entry.Name(), "upload-") {
+					continue
+				}
+				info, err := entry.Info()
+				if err == nil && time.Since(info.ModTime()) > 24*time.Hour {
+					_ = os.Remove(filepath.Join(uploadsDir, entry.Name()))
+				}
+			}
+		}
+	}()
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()

@@ -1,7 +1,10 @@
 package station
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -52,9 +55,10 @@ type State struct {
 	requests []QueueEntry
 	nextID   int
 	queueID  int64
-	votes    map[string]bool
-	settings map[string]any
-	policy   map[string]any
+	votes       map[string]bool
+	settings    map[string]any
+	policy      map[string]any
+	persistPath string
 }
 
 func New(index *library.Index, name string) *State {
@@ -210,7 +214,7 @@ func (s *State) SnapshotLocked() map[string]any {
 		return map[string]any{
 			"id": track.ID, "source": source, "title": track.Title,
 			"artist": track.Artist, "album": track.Album,
-			"duration_ms": track.DurationMS, "cover_url": "",
+			"duration_ms": track.DurationMS, "cover_url": track.CoverURL,
 			"audio": map[string]any{"direct": direct},
 		}
 	}
@@ -350,6 +354,7 @@ func (s *State) UpdateSettings(values map[string]any) {
 			}
 		}
 	}
+	s.saveLocked()
 }
 
 func (s *State) Policy() map[string]any {
@@ -368,6 +373,7 @@ func (s *State) UpdatePolicy(values map[string]any) {
 	for key, value := range values {
 		s.policy[key] = value
 	}
+	s.saveLocked()
 }
 
 func (s *State) ClearQueue() {
@@ -386,6 +392,41 @@ func (s *State) DeleteMessage(id string) bool {
 		}
 	}
 	return false
+}
+
+func (s *State) SetPersistPath(path string) {
+	s.mu.Lock()
+	s.persistPath = path
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		var payload struct {
+			Settings map[string]any `json:"settings"`
+			Policy   map[string]any `json:"policy"`
+		}
+		if json.Unmarshal(raw, &payload) == nil {
+			for key, value := range payload.Settings {
+				s.settings[key] = value
+				if key == "station_name" {
+					s.name = fmt.Sprint(value)
+				}
+			}
+			for key, value := range payload.Policy {
+				s.policy[key] = value
+			}
+		}
+	}
+	s.mu.Unlock()
+}
+
+func (s *State) saveLocked() {
+	if s.persistPath == "" {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(s.persistPath), 0o755)
+	raw, _ := json.MarshalIndent(map[string]any{
+		"settings": s.settings, "policy": s.policy,
+	}, "", "  ")
+	_ = os.WriteFile(s.persistPath, raw, 0o600)
 }
 
 func (s *State) Name() string { return s.name }

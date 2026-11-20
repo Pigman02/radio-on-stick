@@ -33,6 +33,7 @@ type Track struct {
 	URL         string `json:"-"`
 	Source      string `json:"source,omitempty"`
 	SourceID    string `json:"source_id,omitempty"`
+	CoverURL    string `json:"cover_url,omitempty"`
 }
 
 type Index struct {

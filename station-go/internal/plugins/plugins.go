@@ -87,3 +87,18 @@ func (c *Client) Resolve(source, sourceID string) (Candidate, error) {
 	}
 	return *payload.Item, nil
 }
+
+func (c *Client) Lyrics(source, sourceID string) (string, string) {
+	raw, err := c.run("lyrics", source, sourceID)
+	if err != nil {
+		return "", ""
+	}
+	var payload struct {
+		LRC         string `json:"lrc"`
+		Translation string `json:"translation"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return "", ""
+	}
+	return payload.LRC, payload.Translation
+}
