@@ -38,6 +38,8 @@ type QueueEntry struct {
 	Status    string `json:"status"`
 	CreatedAt int64  `json:"created_at"`
 	PinCount  int    `json:"pin_count"`
+	ClientKey string `json:"-"`
+	CanCancel bool   `json:"can_cancel"`
 }
 
 type State struct {
@@ -206,7 +208,7 @@ func (s *State) Skip() {
 	s.advanceLocked()
 }
 
-func (s *State) Request(track library.Track, nickname string) {
+func (s *State) Request(track library.Track, nickname, clientKey string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.current.ID == track.ID {
@@ -231,7 +233,7 @@ func (s *State) Request(track library.Track, nickname string) {
 	s.requests = append(s.requests, QueueEntry{
 		QueueID: s.queueID, TrackID: track.ID, Title: track.Title,
 		Artist: track.Artist, CoverURL: track.CoverURL, Nickname: nickname, Status: "pending",
-		CreatedAt: time.Now().UnixMilli(),
+		CreatedAt: time.Now().UnixMilli(), ClientKey: clientKey,
 	})
 	s.advanceLocked()
 	s.saveLocked()
@@ -335,7 +337,7 @@ func (s *State) SnapshotLocked() map[string]any {
 	}
 }
 
-func (s *State) State() map[string]any {
+func (s *State) State(clientKey string) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tickLocked(time.Now())
@@ -360,6 +362,7 @@ func (s *State) State() map[string]any {
 		}
 		seen[track.ID] = true
 		if entry, ok := pendingByTrack[track.ID]; ok {
+			entry.CanCancel = entry.ClientKey != "" && entry.ClientKey == clientKey
 			requests = append(requests, entry)
 			continue
 		}
@@ -371,6 +374,7 @@ func (s *State) State() map[string]any {
 	for _, entry := range s.requests {
 		if entry.Status == "pending" && !seen[entry.TrackID] {
 			seen[entry.TrackID] = true
+			entry.CanCancel = entry.ClientKey != "" && entry.ClientKey == clientKey
 			requests = append(requests, entry)
 		}
 	}
@@ -417,7 +421,20 @@ func (s *State) Queue() []QueueEntry {
 	return result
 }
 
-func (s *State) Cancel(queueID int64) bool {
+func (s *State) Cancel(queueID int64, clientKey string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, entry := range s.requests {
+		if entry.QueueID == queueID && (entry.ClientKey == "" || entry.ClientKey == clientKey) {
+			s.requests = append(s.requests[:index], s.requests[index+1:]...)
+			s.saveLocked()
+			return true
+		}
+	}
+	return false
+}
+
+func (s *State) CancelAdmin(queueID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for index, entry := range s.requests {

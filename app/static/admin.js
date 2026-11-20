@@ -484,7 +484,7 @@
             await api("/api/admin/queue/delete", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ queue_id: item.id }),
+              body: JSON.stringify({ queue_id: item.queue_id || item.id }),
             });
             await loadState(true);
           } catch (error) { setStatus("offline", errorText(error)); }

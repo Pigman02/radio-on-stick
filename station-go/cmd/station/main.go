@@ -76,6 +76,15 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+func (a *api) policyEnabled(key string) bool {
+	value, ok := a.state.Policy()[key]
+	if !ok {
+		return true
+	}
+	enabled, ok := value.(bool)
+	return !ok || enabled
+}
+
 func (a *api) authorized(r *http.Request) bool {
 	if a.ownerIP(r) {
 		return true
@@ -267,8 +276,7 @@ func (a *api) now(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) stateJSON(w http.ResponseWriter, r *http.Request) {
-	a.touchListener(w, r, "")
-	writeJSON(w, 200, a.state.State())
+	writeJSON(w, 200, a.state.State(a.touchListener(w, r, "")))
 }
 
 func (a *api) saveBackgroundURLsLocked() {
@@ -306,6 +314,10 @@ func (a *api) config(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) request(w http.ResponseWriter, r *http.Request) {
+	if !a.policyEnabled("requests_enabled") {
+		writeJSON(w, 403, map[string]any{"error": "requests_disabled"})
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeJSON(w, 405, map[string]any{"error": "method"})
 		return
@@ -372,7 +384,7 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 		}
 		track = local
 	}
-	a.state.Request(track, strings.TrimSpace(body.Nickname))
+	a.state.Request(track, strings.TrimSpace(body.Nickname), a.touchListener(w, r, strings.TrimSpace(body.Nickname)))
 	writeJSON(w, 200, map[string]any{"ok": true, "track": track})
 }
 
@@ -390,15 +402,24 @@ func (a *api) pause(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}
+	paused := true
 	var body struct {
-		Paused bool `json:"paused"`
+		Paused *bool `json:"paused"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+	if r.ContentLength > 0 && json.NewDecoder(r.Body).Decode(&body) == nil && body.Paused != nil {
+		paused = *body.Paused
+	}
+	a.state.Pause(paused)
+	writeJSON(w, 200, map[string]any{"ok": true, "paused": paused})
+}
+
+func (a *api) resume(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}
-	a.state.Pause(body.Paused)
-	writeJSON(w, 200, map[string]any{"ok": true})
+	a.state.Pause(false)
+	writeJSON(w, 200, map[string]any{"ok": true, "paused": false})
 }
 
 func (a *api) meshStatus(w http.ResponseWriter, r *http.Request) {
@@ -738,7 +759,11 @@ func (a *api) adminDirectory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "directory": map[string]any{"enabled": false}})
 		return
 	}
-	if r.Method == http.MethodPost {
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/refresh") {
+		_ = a.directory.Refresh()
+	} else if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rotate") {
+		a.directory.Rotate()
+	} else if r.Method == http.MethodPost {
 		var body struct {
 			Code string `json:"code"`
 		}
@@ -788,7 +813,7 @@ func (a *api) queueCancel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "bad_json"})
 		return
 	}
-	if !a.state.Cancel(body.QueueID) {
+	if !a.state.Cancel(body.QueueID, a.touchListener(w, r, "")) {
 		writeJSON(w, 404, map[string]any{"error": "not_found"})
 		return
 	}
@@ -811,6 +836,10 @@ func (a *api) queuePin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) upload(w http.ResponseWriter, r *http.Request) {
+	if !a.policyEnabled("uploads_enabled") {
+		writeJSON(w, 403, map[string]any{"error": "uploads_disabled"})
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeJSON(w, 405, map[string]any{"error": "method"})
 		return
@@ -821,6 +850,10 @@ func (a *api) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	ext := strings.ToLower(filepath.Ext(filename))
 	allowed := map[string]bool{".mp3": true, ".aac": true, ".m4a": true, ".ogg": true, ".oga": true, ".opus": true, ".wav": true, ".flac": true, ".webm": true}
+	if mp3Only, ok := a.state.Policy()["mp3_upload_only"].(bool); ok && mp3Only && ext != ".mp3" {
+		writeJSON(w, 415, map[string]any{"error": "mp3_only"})
+		return
+	}
 	if !allowed[ext] {
 		writeJSON(w, 400, map[string]any{"error": "bad_extension"})
 		return
@@ -853,6 +886,10 @@ func (a *api) messages(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, 200, map[string]any{"messages": a.state.Messages()})
 	case http.MethodPost:
+		if !a.policyEnabled("messages_enabled") {
+			writeJSON(w, 403, map[string]any{"error": "messages_disabled"})
+			return
+		}
 		var body struct {
 			Nickname string `json:"nickname"`
 			Body     string `json:"body"`
@@ -960,7 +997,7 @@ func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}
-	state := a.state.State()
+	state := a.state.State("")
 	result := map[string]any{
 		"now": state["now"], "upcoming": state["upcoming"], "queue": state["queue"],
 		"messages": state["messages"], "history": state["history"],
@@ -993,7 +1030,7 @@ func (a *api) adminQueueDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "bad_json"})
 		return
 	}
-	a.state.Cancel(body.QueueID)
+	a.state.CancelAdmin(body.QueueID)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -1019,9 +1056,9 @@ func (a *api) adminTrack(w http.ResponseWriter, r *http.Request) {
 			ID: body.CandidateID, Title: item.Title, Artist: item.Artist,
 			Album: item.Album, DurationMS: item.DurationMS, URL: item.AudioURL,
 			Source: item.Source, SourceID: item.SourceID,
-		}, "admin")
+		}, "admin", "admin")
 	} else if track, ok := a.index.Get(body.CandidateID); ok {
-		a.state.Request(track, "admin")
+		a.state.Request(track, "admin", "admin")
 	} else {
 		writeJSON(w, 404, map[string]any{"error": "not_found"})
 		return
@@ -1101,6 +1138,15 @@ func (a *api) adminPolicy(w http.ResponseWriter, r *http.Request) {
 func (a *api) adminDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(r) {
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var body struct{ ID string `json:"id"` }
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	if !a.state.DeleteMessage(body.ID) {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -1273,6 +1319,9 @@ func main() {
 	mux.HandleFunc("/api/admin/messages/delete", a.adminDeleteMessage)
 	mux.HandleFunc("/api/admin/skip", a.skip)
 	mux.HandleFunc("/api/admin/pause", a.pause)
+	mux.HandleFunc("/api/admin/resume", a.resume)
+	mux.HandleFunc("/api/admin/directory/rotate", a.adminDirectory)
+	mux.HandleFunc("/api/admin/directory/refresh", a.adminDirectory)
 	mux.HandleFunc("/native/", a.native)
 	mux.HandleFunc("/ws", a.mesh.ServeHTTP)
 	mux.HandleFunc("/mesh.json", a.meshStatus)

@@ -1,9 +1,9 @@
 "use strict";
 
-const CACHE = "radio-shell-v64";
+const CACHE = "radio-shell-v65";
 const SHELL = [
   "/",
-  "/app.js?v=74",
+  "/app.js?v=75",
   "/mesh.js?v=11",
   "/style.css?v=52",
   "/manifest.webmanifest",

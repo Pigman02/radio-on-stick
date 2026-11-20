@@ -3145,7 +3145,7 @@ function loadAdminExtension() {
   style.id = "adminExtensionStyle";
   document.head.appendChild(style);
   const script = document.createElement("script");
-  script.src = "/admin.js?v=29";
+  script.src = "/admin.js?v=30";
   script.id = "adminExtensionScript";
   adminExtensionPromise = new Promise((resolve, reject) => {
     script.onload = resolve;
