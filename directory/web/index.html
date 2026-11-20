@@ -15,6 +15,7 @@
     p { color:var(--muted); }
     form { display:flex; gap:8px; margin-top:22px; }
     input { flex:1; min-width:0; padding:13px 15px; border:1px solid var(--line); border-radius:13px; background:#0a0f18; color:var(--text); font:inherit; text-transform:uppercase; letter-spacing:.08em; }
+    #nickname { margin-top:10px; text-transform:none; letter-spacing:0; }
     input:focus { outline:2px solid rgba(126,231,199,.35); border-color:var(--accent); }
     button { padding:13px 20px; border:0; border-radius:13px; background:var(--accent); color:#06110e; font:inherit; font-weight:800; cursor:pointer; }
     button:disabled { opacity:.55; cursor:wait; }
@@ -36,6 +37,7 @@
     <p>输入 16 位邀请码，进入对应的电台。</p>
 
     <form id="joinForm" autocomplete="off">
+      <input id="nickname" maxlength="16" placeholder="昵称（可选，跨电台沿用）" aria-label="昵称">
       <input id="code" maxlength="24" placeholder="7K4M9Q2XJ8R5T3WA" aria-label="邀请码" required>
       <button id="submit" type="submit">加入</button>
     </form>

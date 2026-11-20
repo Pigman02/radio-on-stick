@@ -244,6 +244,31 @@ func (c *Client) Status(includeCode bool) Status {
 	return result
 }
 
+func (c *Client) SetInvite(raw string) error {
+	code := normalize(raw)
+	if len(code) != 16 {
+		return fmt.Errorf("邀请码必须是 16 位")
+	}
+	for _, char := range code {
+		found := false
+		for _, allowed := range alphabet {
+			if char == rune(allowed) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("邀请码包含非法字符")
+		}
+	}
+	c.mu.Lock()
+	c.Identity.InviteCode = code
+	c.registered = false
+	c.mu.Unlock()
+	c.save()
+	return c.Refresh()
+}
+
 func (c *Client) Rotate() {
 	c.mu.Lock()
 	c.Identity.InviteCode = newCode()

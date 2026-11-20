@@ -840,6 +840,15 @@
     codeLabel.appendChild(codeInput);
     wrap.appendChild(codeLabel);
 
+    const customLabel = el("label", "admin-field");
+    customLabel.appendChild(el("span", "", "更换邀请码（16 位，可自定义）"));
+    const customInput = document.createElement("input");
+    customInput.id = "adminDirectoryCustomInvite";
+    customInput.maxLength = 16;
+    customInput.placeholder = "例如 7K4M9Q2XJ8R5T3WA";
+    customLabel.appendChild(customInput);
+    wrap.appendChild(customLabel);
+
     const codeActions = el("div", "admin-console-actions");
     codeActions.appendChild(button("复制邀请码", "primary-btn", async () => {
       try {
@@ -856,7 +865,23 @@
         await loadState(true);
       } catch (error) { setStatus("offline", errorText(error, "刷新失败")); }
     }));
-    codeActions.appendChild(button("轮换邀请码", "danger-btn", async () => {
+    codeActions.appendChild(button("保存自定义邀请码", "primary-btn", async () => {
+      const value = customInput.value.trim().toUpperCase();
+      if (!value) {
+        setStatus("offline", "请输入 16 位邀请码");
+        return;
+      }
+      try {
+        await api("/api/admin/directory/invite", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: value }),
+        });
+        setStatus("live", "邀请码已更新");
+        await loadState(true);
+      } catch (error) { setStatus("offline", errorText(error, "更新失败")); }
+    }));
+    codeActions.appendChild(button("随机更换", "danger-btn", async () => {
       if (!window.confirm("轮换后旧邀请码立即失效，继续？")) return;
       try {
         await api("/api/admin/directory/rotate", { method: "POST" });

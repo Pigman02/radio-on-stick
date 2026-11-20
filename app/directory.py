@@ -199,6 +199,16 @@ class DirectoryClient:
             self._last_error = ""
             return self._status_locked(include_code=True)
 
+    def set_invite(self, raw: str) -> dict[str, Any]:
+        code = normalize_code(raw)
+        if len(code) != 16 or any(char not in _ALPHABET for char in code):
+            raise ValueError("邀请码必须是 16 位 Crockford Base32")
+        with self._lock:
+            self._invite_code = code
+            self.db.set_setting(_KEY_INVITE_CODE, code)
+            self._registered = False
+        return self.refresh()
+
     def rotate_invite(self) -> dict[str, Any]:
         with self._lock:
             self._invite_code = new_invite_code()

@@ -725,7 +725,18 @@ func (a *api) adminDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		a.directory.Rotate()
+		var body struct {
+			Code string `json:"code"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if strings.TrimSpace(body.Code) != "" {
+			if err := a.directory.SetInvite(body.Code); err != nil {
+				writeJSON(w, 400, map[string]any{"error": "invalid_invite", "message": err.Error()})
+				return
+			}
+		} else {
+			a.directory.Rotate()
+		}
 	} else {
 		_ = a.directory.Refresh()
 	}
@@ -1202,6 +1213,7 @@ func main() {
 	mux.HandleFunc("/api/admin/owner", a.adminOwner)
 	mux.HandleFunc("/api/admin/state", a.adminState)
 	mux.HandleFunc("/api/admin/directory", a.adminDirectory)
+	mux.HandleFunc("/api/admin/directory/invite", a.adminDirectory)
 	mux.HandleFunc("/api/admin/background", a.adminBackground)
 	mux.HandleFunc("/api/admin/background/delete", a.adminBackgroundDelete)
 	mux.HandleFunc("/api/admin/background/url", a.adminBackgroundURL)

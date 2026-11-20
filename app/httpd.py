@@ -858,6 +858,19 @@ class RadioHandler(BaseHTTPRequestHandler):
         if path == "/api/join":
             self._handle_join()
             return
+        if path == "/api/admin/directory/invite":
+            self._require_admin()
+            if self.app.directory is None or not self.app.directory.enabled:
+                raise ApiError(503, "directory_disabled", "Directory 未配置")
+            data = self._read_json()
+            try:
+                status = self.app.directory.set_invite(str(data.get("code") or ""))
+            except ValueError as exc:
+                raise ApiError(400, "invalid_invite", str(exc)) from exc
+            except Exception as exc:
+                raise ApiError(502, "directory_error", str(exc)) from exc
+            self._send_json(200, {"ok": True, "directory": status})
+            return
         if path == "/api/admin/directory/rotate":
             self._require_admin()
             if self.app.directory is None or not self.app.directory.enabled:

@@ -893,11 +893,18 @@ async function addLocalBackgroundFiles(files) {
 /* ---------- nickname ---------- */
 
 function loadNickname() {
+  const urlNickname = (new URLSearchParams(location.search).get("nickname") || "").trim().slice(0, 16);
   state.nickname = (
+    urlNickname ||
     cookieGet("radio_nickname") ||
     storageGet("radio.nickname") ||
     ""
   ).trim();
+  if (urlNickname) {
+    const url = new URL(location.href);
+    url.searchParams.delete("nickname");
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
   if (state.nickname) {
     storageSet("radio.nickname", state.nickname);
     cookieSet("radio_nickname", state.nickname);
@@ -3077,7 +3084,7 @@ function loadAdminExtension() {
   style.id = "adminExtensionStyle";
   document.head.appendChild(style);
   const script = document.createElement("script");
-  script.src = "/admin.js?v=28";
+  script.src = "/admin.js?v=29";
   script.id = "adminExtensionScript";
   adminExtensionPromise = new Promise((resolve, reject) => {
     script.onload = resolve;

@@ -3,12 +3,14 @@
 (() => {
   const form = document.getElementById("joinForm");
   const codeInput = document.getElementById("code");
+  const nicknameInput = document.getElementById("nickname");
   const submit = document.getElementById("submit");
   const status = document.getElementById("status");
   const result = document.getElementById("result");
   const stationName = document.getElementById("stationName");
   const stationMeta = document.getElementById("stationMeta");
   const enter = document.getElementById("enter");
+  const NICKNAME_KEY = "radio.nickname";
 
   function normalize(value) {
     return String(value || "")
@@ -53,7 +55,14 @@
         station.station_id,
       ].filter(Boolean).join(" · ");
       if (stationUrl) {
-        enter.href = `${stationUrl.replace(/\/$/, "")}/join#${encodeURIComponent(code)}`;
+        try {
+          localStorage.setItem(NICKNAME_KEY, nicknameInput.value.trim().slice(0, 16));
+        } catch (_) {
+          /* ignore */
+        }
+        const nickname = nicknameInput.value.trim().slice(0, 16);
+        const query = nickname ? `?nickname=${encodeURIComponent(nickname)}` : "";
+        enter.href = `${stationUrl.replace(/\/$/, "")}/join${query}#${encodeURIComponent(code)}`;
         enter.classList.remove("hidden");
       } else {
         enter.classList.add("hidden");
@@ -72,6 +81,12 @@
     event.preventDefault();
     resolveCode(codeInput.value);
   });
+
+  try {
+    nicknameInput.value = localStorage.getItem(NICKNAME_KEY) || "";
+  } catch (_) {
+    /* ignore */
+  }
 
   const initial = normalize(decodeURIComponent(location.hash.slice(1)));
   if (initial) {

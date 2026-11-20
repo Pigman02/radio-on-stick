@@ -6,6 +6,8 @@
   const submit = document.getElementById("submit");
   const status = document.getElementById("status");
 
+  const nickname = new URLSearchParams(location.search).get("nickname") || "";
+
   function normalize(value) {
     return String(value || "")
       .toUpperCase()
@@ -52,6 +54,18 @@
     event.preventDefault();
     join(codeInput.value);
   });
+
+  if (nickname) {
+    const value = nickname.trim().slice(0, 16);
+    try {
+      localStorage.setItem("radio.nickname", value);
+      const host = location.hostname;
+      const domain = host.endsWith(".sslip.io") ? "; Domain=.sslip.io" : "";
+      document.cookie = `radio_nickname=${encodeURIComponent(value)}; max-age=31536000; path=/; SameSite=Lax${domain}`;
+    } catch (_) {
+      /* ignore */
+    }
+  }
 
   const initial = normalize(decodeURIComponent(location.hash.slice(1)));
   if (initial) {
