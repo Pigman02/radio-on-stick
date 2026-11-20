@@ -518,7 +518,7 @@ func (s *State) Settings() map[string]any {
 func (s *State) UpdateSettings(values map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, key := range []string{"station_name", "subtitle", "notice", "page_title", "background_interval_sec"} {
+	for _, key := range []string{"station_name", "subtitle", "notice", "page_title", "background_interval_sec", "public_url", "lan_url", "tunnel_url", "access_note"} {
 		if value, ok := values[key]; ok {
 			s.settings[key] = value
 			if key == "station_name" {
