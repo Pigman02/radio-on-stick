@@ -93,6 +93,7 @@ type State struct {
 	policy      map[string]any
 	persistPath string
 	listeners   int
+	onAdvance   func(library.Track)
 }
 
 func New(index *library.Index, name string) *State {
@@ -139,10 +140,17 @@ func (s *State) Rebuild() {
 	// Skip first).
 }
 
+func (s *State) SetAdvanceHook(hook func(library.Track)) {
+	s.mu.Lock()
+	s.onAdvance = hook
+	s.mu.Unlock()
+}
+
 func (s *State) advanceLocked() {
 	if s.paused || s.current.ID != "" {
 		return
 	}
+	old := s.current
 	if len(s.queue) == 0 {
 		return
 	}
@@ -161,6 +169,11 @@ func (s *State) advanceLocked() {
 		}
 	}
 	s.saveLocked()
+	if old.ID != "" && s.onAdvance != nil {
+		// Upload lifecycle cleanup runs after the new track is committed and
+		// never touches paths outside the configured uploads directory.
+		s.onAdvance(old)
+	}
 }
 
 func (s *State) tickLocked(now time.Time) {

@@ -56,6 +56,22 @@ type api struct {
 	ownerIPs      map[string]bool
 	limitMu       sync.Mutex
 	limits        map[string]map[string][]int64
+	bannedWords   []string
+}
+
+func (a *api) banned(texts ...string) bool {
+	if len(a.bannedWords) == 0 {
+		return false
+	}
+	for _, text := range texts {
+		value := strings.ToLower(text)
+		for _, word := range a.bannedWords {
+			if word != "" && strings.Contains(value, strings.ToLower(word)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (a *api) allow(kind, key string, limit int, window time.Duration) bool {
@@ -89,6 +105,17 @@ func (a *api) allow(kind, key string, limit int, window time.Duration) bool {
 func (a *api) rateLimited(w http.ResponseWriter, kind string) {
 	w.Header().Set("Retry-After", "30")
 	writeJSON(w, 429, map[string]any{"error": "rate_limited", "message": kind + " 操作过于频繁，请稍后再试"})
+}
+
+func splitWords(raw string) []string {
+	result := []string{}
+	for _, item := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '，' || r == '\n' }) {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 func env(key, fallback string) string {
@@ -422,6 +449,10 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		track = local
+	}
+	if a.banned(body.Nickname) {
+		writeJSON(w, 400, map[string]any{"error": "blocked_word"})
+		return
 	}
 	a.state.Request(track, strings.TrimSpace(body.Nickname), a.touchListener(w, r, strings.TrimSpace(body.Nickname)))
 	writeJSON(w, 200, map[string]any{"ok": true, "track": track})
@@ -1001,6 +1032,10 @@ func (a *api) messages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		text := strings.TrimSpace(body.Body)
+		if a.banned(body.Nickname, text) {
+			writeJSON(w, 400, map[string]any{"error": "blocked_word"})
+			return
+		}
 		if text == "" || len([]rune(text)) > 200 {
 			writeJSON(w, 400, map[string]any{"error": "bad_message"})
 			return
@@ -1184,10 +1219,18 @@ func (a *api) adminTrackDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "bad_json"})
 		return
 	}
+	track, existed := a.index.Get(body.TrackID)
 	if a.state.Current().ID == body.TrackID {
 		a.state.Skip()
 	}
 	a.index.Remove(body.TrackID)
+	if existed && track.Path != "" {
+		path := filepath.Clean(track.Path)
+		root := filepath.Clean(a.uploadsDir) + string(os.PathSeparator)
+		if strings.HasPrefix(path, root) {
+			_ = os.Remove(path)
+		}
+	}
 	a.state.Rebuild()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -1357,6 +1400,17 @@ func main() {
 	state := station.New(index, env("RADIO_STATION_NAME", "Go Radio Station"))
 	state.Rebuild()
 	state.SetPersistPath(env("RADIO_GO_STATE", "data/station-go-state.json"))
+	if os.Getenv("RADIO_GO_KEEP_UPLOADS") != "1" {
+		state.SetAdvanceHook(func(track library.Track) {
+			path := filepath.Clean(track.Path)
+			root := filepath.Clean(uploadsDir) + string(os.PathSeparator)
+			if path == "" || !strings.HasPrefix(path, root) {
+				return
+			}
+			_ = os.Remove(path)
+			index.Remove(track.ID)
+		})
+	}
 	directoryClient := directory.New(
 		env("RADIO_GO_IDENTITY", "data/station-go-identity.json"),
 		env("RADIO_DIRECTORY_PUBLIC_URL", ""),
@@ -1394,6 +1448,7 @@ func main() {
 		mp3Cache:      map[string]bool{},
 		ownerIPs:      ownerSet(env("RADIO_OWNER_IPS", "127.0.0.1,::1")),
 		limits:        map[string]map[string][]int64{},
+		bannedWords:   splitWords(os.Getenv("RADIO_BANNED_WORDS")),
 	}
 	if raw, err := os.ReadFile(a.backgroundFile); err == nil {
 		_ = json.Unmarshal(raw, &a.backgroundURLs)
