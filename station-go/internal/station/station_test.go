@@ -28,6 +28,35 @@ func TestPauseFreezesAuthoritativePosition(t *testing.T) {
 	}
 }
 
+func TestVotesResetWhenTrackEndsNaturally(t *testing.T) {
+	s := New(library.New(), "test")
+	s.current = library.Track{ID: "one", Title: "One", DurationMS: 10}
+	s.started = time.Now().Add(-time.Second)
+	s.queue = []library.Track{{ID: "two", Title: "Two", DurationMS: 1000}}
+	s.votes = map[string]bool{"a": true, "b": true}
+	s.Tick()
+	if s.current.ID != "two" {
+		t.Fatalf("track did not advance: %#v", s.current)
+	}
+	if len(s.votes) != 0 {
+		t.Fatalf("votes survived natural advance: %#v", s.votes)
+	}
+}
+
+func TestVotesResetOnManualSkip(t *testing.T) {
+	s := New(library.New(), "test")
+	s.current = library.Track{ID: "one", Title: "One", DurationMS: 1000}
+	s.queue = []library.Track{{ID: "two", Title: "Two", DurationMS: 1000}}
+	s.votes = map[string]bool{"a": true}
+	s.Skip()
+	if s.current.ID != "two" {
+		t.Fatalf("track did not advance after skip: %#v", s.current)
+	}
+	if len(s.votes) != 0 {
+		t.Fatalf("votes survived manual skip: %#v", s.votes)
+	}
+}
+
 func TestQueueCancelRequiresOwner(t *testing.T) {
 	s := New(library.New(), "test")
 	s.Request(library.Track{ID: "track", Title: "Track", DurationMS: 1000}, "alice", "client-a")

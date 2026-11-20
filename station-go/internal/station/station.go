@@ -163,6 +163,9 @@ func (s *State) advanceLocked() {
 		return
 	}
 	old := s.current
+	// A new track always starts a fresh vote round, whether it was selected
+	// manually, by vote, or because the previous track ended naturally.
+	s.votes = map[string]bool{}
 	s.reorderQueueLocked()
 	if len(s.queue) == 0 {
 		return
