@@ -3034,14 +3034,23 @@ function setVolumePanel(open) {
 
 muteBtn.addEventListener("click", () => {
   if (portraitMedia.matches) {
-    if (!volumePanelOpen) {
-      setVolumePanel(true);
+    // Three-state cycle while the slider is collapsed:
+    // hidden+sound -> open+sound -> hidden+muted -> hidden+sound ...
+    // If the user is already muted, the first tap restores sound instead of
+    // opening the slider.
+    if (audio.muted) {
+      audio.muted = false;
+      audio.volume = clamp(Number(volumeEl.value), 0, 1);
+      setVolumePanel(false);
+      updateMuteUI();
       return;
     }
-    audio.muted = !audio.muted;
-    if (!audio.muted) {
-      audio.volume = clamp(Number(volumeEl.value), 0, 1);
+    if (!volumePanelOpen) {
+      setVolumePanel(true);
+      updateMuteUI();
+      return;
     }
+    audio.muted = true;
     setVolumePanel(false);
     updateMuteUI();
     return;

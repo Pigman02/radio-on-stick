@@ -5536,3 +5536,22 @@ html[data-theme="light"] .player-dock .volume-toggle.muted {
   color: var(--danger) !important;
   background: rgba(201, 79, 96, 0.16) !important;
 }
+
+/* Landscape request buttons are capsules, not ellipses created by the
+   generic 50% icon-button rule. */
+@media (orientation: landscape) {
+  .center-controls .library-btn,
+  .center-controls .vote-btn {
+    border-radius: 999px !important;
+  }
+}
+
+/* Chat input is 5% narrower; keep the send control inside its right edge. */
+.chat-page .message-form.live input {
+  width: 95%;
+  flex: 0 1 95%;
+}
+
+.chat-page .message-form.live .send-btn {
+  right: calc(5% + 5px);
+}
