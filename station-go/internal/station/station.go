@@ -152,6 +152,7 @@ func (s *State) Request(track library.Track, nickname string) {
 			return
 		}
 	}
+	s.queue = append([]library.Track{track}, s.queue...)
 	s.queueID++
 	s.requests = append(s.requests, QueueEntry{
 		QueueID: s.queueID, TrackID: track.ID, Title: track.Title,

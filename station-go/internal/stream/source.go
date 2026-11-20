@@ -123,7 +123,7 @@ func NewSession(track library.Track) (*Session, error) {
 	if track.URL != "" {
 		input = track.URL
 	}
-	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", input, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
+	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-i", input, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err

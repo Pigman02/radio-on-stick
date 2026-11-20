@@ -43,6 +43,8 @@ type api struct {
 	backgroundsDir string
 	backgroundMu sync.Mutex
 	backgroundURLs []string
+	pluginMu      sync.Mutex
+	pluginCache   map[string]plugins.Candidate
 }
 
 func env(key, fallback string) string {
@@ -190,15 +192,32 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 	}
 	var track library.Track
 	if source, sourceID, found := strings.Cut(body.TrackID, ":"); found {
-		item, err := a.plugins.Resolve(source, sourceID)
-		if err != nil || item.AudioURL == "" {
+		a.pluginMu.Lock()
+		item, cached := a.pluginCache[body.TrackID]
+		a.pluginMu.Unlock()
+		resolved, err := a.plugins.Resolve(source, sourceID)
+		if err != nil || resolved.AudioURL == "" {
 			writeJSON(w, 502, map[string]any{"error": "private_source_failed"})
 			return
 		}
+		if cached {
+			if resolved.Title == "" {
+				resolved.Title = item.Title
+			}
+			if resolved.Artist == "" {
+				resolved.Artist = item.Artist
+			}
+			if resolved.Album == "" {
+				resolved.Album = item.Album
+			}
+			if resolved.DurationMS == 0 {
+				resolved.DurationMS = item.DurationMS
+			}
+		}
 		track = library.Track{
-			ID: body.TrackID, Title: item.Title, Artist: item.Artist,
-			Album: item.Album, DurationMS: item.DurationMS,
-			URL: item.AudioURL, Source: item.Source, SourceID: item.SourceID,
+			ID: body.TrackID, Title: resolved.Title, Artist: resolved.Artist,
+			Album: resolved.Album, DurationMS: resolved.DurationMS,
+			URL: resolved.AudioURL, Source: resolved.Source, SourceID: resolved.SourceID,
 		}
 	} else {
 		local, ok := a.index.Get(body.TrackID)
@@ -747,6 +766,9 @@ func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.plugins != nil && strings.TrimSpace(query) != "" {
 		for _, item := range a.plugins.Search(query) {
+			a.pluginMu.Lock()
+			a.pluginCache[item.ID] = item
+			a.pluginMu.Unlock()
 			items = append(items, map[string]any{
 				"id": item.ID, "source": item.Source, "source_id": item.SourceID,
 				"title": item.Title, "artist": item.Artist, "album": item.Album,
@@ -816,6 +838,7 @@ func main() {
 		joinSecret: env("RADIO_JOIN_SECRET", env("RADIO_GO_ADMIN_TOKEN", "go-join-secret")),
 		plugins:    plugins.New(env("RADIO_PRIVATE_PYTHON", "python3"), env("RADIO_PRIVATE_HELPER", "private/plugins/commercial/helper.py")),
 		backgroundsDir: env("RADIO_GO_BACKGROUNDS", "data/backgrounds"),
+		pluginCache: map[string]plugins.Candidate{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
