@@ -30,6 +30,9 @@ type Track struct {
 	DurationMS  int64  `json:"duration_ms"`
 	Format      string `json:"format"`
 	Path        string `json:"-"`
+	URL         string `json:"-"`
+	Source      string `json:"source,omitempty"`
+	SourceID    string `json:"source_id,omitempty"`
 }
 
 type Index struct {
@@ -101,7 +104,7 @@ func scanFile(path string) *Track {
 		Album:      album,
 		DurationMS: duration,
 		Format:     strings.TrimPrefix(ext, "."),
-		Path:       path,
+		Path:       path, Source: "local", SourceID: trackID(path),
 	}
 }
 

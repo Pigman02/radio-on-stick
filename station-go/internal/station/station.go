@@ -198,11 +198,19 @@ func (s *State) SnapshotLocked() map[string]any {
 		if track.ID == "" {
 			return nil
 		}
+		source := track.Source
+		if source == "" {
+			source = "local"
+		}
+		direct := "/native/" + track.ID
+		if track.URL != "" {
+			direct = ""
+		}
 		return map[string]any{
-			"id": track.ID, "source": "local", "title": track.Title,
+			"id": track.ID, "source": source, "title": track.Title,
 			"artist": track.Artist, "album": track.Album,
 			"duration_ms": track.DurationMS, "cover_url": "",
-			"audio": map[string]any{"direct": "/native/" + track.ID},
+			"audio": map[string]any{"direct": direct},
 		}
 	}
 	next := map[string]any(nil)

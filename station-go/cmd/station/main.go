@@ -19,6 +19,7 @@ import (
 	"radio-on-stick/station-go/internal/join"
 	"radio-on-stick/station-go/internal/library"
 	"radio-on-stick/station-go/internal/mesh"
+	"radio-on-stick/station-go/internal/plugins"
 	"radio-on-stick/station-go/internal/station"
 	"radio-on-stick/station-go/internal/stream"
 )
@@ -36,6 +37,7 @@ type api struct {
 	directory  *directory.Client
 	joinRequired bool
 	joinSecret string
+	plugins    *plugins.Client
 }
 
 func env(key, fallback string) string {
@@ -159,10 +161,25 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "bad_json"})
 		return
 	}
-	track, ok := a.index.Get(body.TrackID)
-	if !ok {
-		writeJSON(w, 404, map[string]any{"error": "not_found"})
-		return
+	var track library.Track
+	if source, sourceID, found := strings.Cut(body.TrackID, ":"); found {
+		item, err := a.plugins.Resolve(source, sourceID)
+		if err != nil || item.AudioURL == "" {
+			writeJSON(w, 502, map[string]any{"error": "private_source_failed"})
+			return
+		}
+		track = library.Track{
+			ID: body.TrackID, Title: item.Title, Artist: item.Artist,
+			Album: item.Album, DurationMS: item.DurationMS,
+			URL: item.AudioURL, Source: item.Source, SourceID: item.SourceID,
+		}
+	} else {
+		local, ok := a.index.Get(body.TrackID)
+		if !ok {
+			writeJSON(w, 404, map[string]any{"error": "not_found"})
+			return
+		}
+		track = local
 	}
 	a.state.Request(track, strings.TrimSpace(body.Nickname))
 	writeJSON(w, 200, map[string]any{"ok": true, "track": track})
@@ -515,14 +532,29 @@ func (a *api) adminDeleteMessage(w http.ResponseWriter, r *http.Request) {
 func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 30 {
+		limit = 12
+	}
 	tracks := a.index.Search(query, limit)
-	items := make([]map[string]any, 0, len(tracks))
+	items := make([]map[string]any, 0, len(tracks)+limit)
 	for _, track := range tracks {
 		items = append(items, map[string]any{
-			"source": "local", "source_id": track.ID, "title": track.Title,
-			"artist": track.Artist, "album": track.Album,
+			"id": track.ID, "source": "local", "source_id": track.ID,
+			"title": track.Title, "artist": track.Artist, "album": track.Album,
 			"duration_ms": track.DurationMS, "cover_url": "",
 		})
+	}
+	if a.plugins != nil && strings.TrimSpace(query) != "" {
+		for _, item := range a.plugins.Search(query) {
+			items = append(items, map[string]any{
+				"id": item.ID, "source": item.Source, "source_id": item.SourceID,
+				"title": item.Title, "artist": item.Artist, "album": item.Album,
+				"duration_ms": item.DurationMS, "cover_url": item.CoverURL,
+			})
+		}
+	}
+	if len(items) > limit {
+		items = items[:limit]
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "candidates": items})
 }
@@ -577,6 +609,7 @@ func main() {
 		directory: directoryClient,
 		joinRequired: os.Getenv("RADIO_JOIN_REQUIRED") == "1",
 		joinSecret: env("RADIO_JOIN_SECRET", env("RADIO_GO_ADMIN_TOKEN", "go-join-secret")),
+		plugins:    plugins.New(env("RADIO_PRIVATE_PYTHON", "python3"), env("RADIO_PRIVATE_HELPER", "private/plugins/commercial/helper.py")),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
