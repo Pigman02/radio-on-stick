@@ -169,7 +169,12 @@ const state = {
 // Local/owner playback can request ?direct=1 to avoid P2P entirely and
 // pull audio straight from this server's /native endpoint.
 const LOCAL_DIRECT = new URLSearchParams(location.search).get("direct") === "1";
-const mesh = LOCAL_DIRECT ? null : window.RadioMesh || null;
+const FORCE_P2P = new URLSearchParams(location.search).get("p2p") === "1";
+// Edge has repeatedly underrun the MP3 MSE/P2P path while Safari's native
+// HTTP path stays smooth. Prefer native playback on Edge; ?p2p=1 remains an
+// explicit opt-in for diagnosing WebRTC.
+const EDGE_NATIVE = /\bEdg\//i.test(navigator.userAgent) && !FORCE_P2P;
+const mesh = LOCAL_DIRECT || EDGE_NATIVE ? null : window.RadioMesh || null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
