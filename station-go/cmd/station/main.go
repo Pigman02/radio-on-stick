@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"radio-on-stick/station-go/internal/directory"
+	"radio-on-stick/station-go/internal/join"
 	"radio-on-stick/station-go/internal/library"
 	"radio-on-stick/station-go/internal/mesh"
 	"radio-on-stick/station-go/internal/station"
@@ -31,6 +33,9 @@ type api struct {
 	mesh       *mesh.Hub
 	staticDir  string
 	uploadsDir string
+	directory  *directory.Client
+	joinRequired bool
+	joinSecret string
 }
 
 func env(key, fallback string) string {
@@ -247,6 +252,80 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(track.Path), info.ModTime(), file)
 }
 
+func (a *api) joinAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 200, map[string]any{"ok": true, "join_required": a.joinRequired})
+		return
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	if a.directory == nil || !a.directory.Verify(body.Code) {
+		writeJSON(w, 403, map[string]any{"error": "invalid_code", "message": "邀请码无效"})
+		return
+	}
+	token := join.Make(a.joinSecret, body.Code, 7*24*time.Hour)
+	cookie := &http.Cookie{
+		Name: join.CookieName, Value: token, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 60 * 60,
+		Secure: r.Header.Get("X-Forwarded-Proto") == "https",
+	}
+	http.SetCookie(w, cookie)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) validJoin(r *http.Request) bool {
+	cookie, err := r.Cookie(join.CookieName)
+	if err != nil || a.directory == nil {
+		return false
+	}
+	return join.Verify(a.joinSecret, cookie.Value, a.directory.InviteCode())
+}
+
+func (a *api) secure(next http.Handler) http.Handler {
+	public := map[string]bool{
+		"/join": true, "/join/": true,
+		"/join.html": true, "/join.js": true, "/app.js": true,
+		"/admin.js": true, "/mesh.js": true, "/style.css": true,
+		"/admin.css": true, "/placeholder.svg": true, "/manifest.webmanifest": true,
+		"/sw.js": true, "/favicon.ico": true, "/healthz": true, "/api/config": true,
+		"/api/join": true, "/admin": true, "/admin/": true,
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !a.joinRequired || public[r.URL.Path] || strings.HasPrefix(r.URL.Path, "/api/admin/") || a.validJoin(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/join", http.StatusFound)
+			return
+		}
+		writeJSON(w, 401, map[string]any{"error": "join_required", "message": "请输入邀请码加入电台"})
+	})
+}
+
+func (a *api) adminDirectory(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if a.directory == nil {
+		writeJSON(w, 200, map[string]any{"ok": true, "directory": map[string]any{"enabled": false}})
+		return
+	}
+	if r.Method == http.MethodPost {
+		a.directory.Rotate()
+	} else {
+		_ = a.directory.Refresh()
+	}
+	status := a.directory.Status(true)
+	writeJSON(w, 200, map[string]any{"ok": true, "directory": status})
+}
+
 func (a *api) root(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/admin" || r.URL.Path == "/admin/" {
 		http.ServeFile(w, r, filepath.Join(a.staticDir, "index.html"))
@@ -384,7 +463,7 @@ func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
 		"messages": state["messages"], "history": state["history"],
 		"policy": a.state.Policy(), "settings": a.state.Settings(),
 		"tracks": a.index.List(200), "backgrounds": []any{},
-		"directory": map[string]any{"enabled": false},
+		"directory": func() any { if a.directory == nil { return map[string]any{"enabled": false} }; return a.directory.Status(true) }(),
 	}
 	writeJSON(w, 200, result)
 }
@@ -471,6 +550,21 @@ func main() {
 	}
 	state := station.New(index, env("RADIO_STATION_NAME", "Go Radio Station"))
 	state.Rebuild()
+	directoryClient := directory.New(
+		env("RADIO_GO_IDENTITY", "data/station-go-identity.json"),
+		env("RADIO_DIRECTORY_PUBLIC_URL", ""),
+		env("RADIO_DIRECTORY_URL", ""),
+		os.Getenv("RADIO_DIRECTORY_REGISTER_TOKEN"),
+		0, func() string { return state.Name() },
+	)
+	heartbeat := 5 * time.Minute
+	if raw := os.Getenv("RADIO_DIRECTORY_HEARTBEAT"); raw != "" {
+		if seconds, err := strconv.Atoi(raw); err == nil && seconds > 0 {
+			heartbeat = time.Duration(seconds) * time.Second
+		}
+	}
+	directoryClient.Heartbeat = heartbeat
+	directoryClient.Start()
 	a := &api{
 		index:      index,
 		libraryDir: clean,
@@ -480,12 +574,16 @@ func main() {
 		mesh:       mesh.NewHub(),
 		staticDir:  env("RADIO_STATIC_DIR", "app/static"),
 		uploadsDir: env("RADIO_GO_UPLOADS", "data/uploads"),
+		directory: directoryClient,
+		joinRequired: os.Getenv("RADIO_JOIN_REQUIRED") == "1",
+		joinSecret: env("RADIO_JOIN_SECRET", env("RADIO_GO_ADMIN_TOKEN", "go-join-secret")),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
 	mux.HandleFunc("/now.json", a.now)
 	mux.HandleFunc("/api/state", a.stateJSON)
 	mux.HandleFunc("/api/config", a.config)
+	mux.HandleFunc("/api/join", a.joinAPI)
 	mux.HandleFunc("/api/request", a.request)
 	mux.HandleFunc("/api/queue/cancel", a.queueCancel)
 	mux.HandleFunc("/api/queue/pin", a.queuePin)
@@ -496,6 +594,7 @@ func main() {
 	mux.HandleFunc("/api/report", a.report)
 	mux.HandleFunc("/api/lyrics/", a.lyrics)
 	mux.HandleFunc("/api/admin/state", a.adminState)
+	mux.HandleFunc("/api/admin/directory", a.adminDirectory)
 	mux.HandleFunc("/api/admin/settings", a.adminSettings)
 	mux.HandleFunc("/api/admin/policy", a.adminPolicy)
 	mux.HandleFunc("/api/admin/messages/delete", a.adminDeleteMessage)
@@ -523,7 +622,7 @@ func main() {
 	}()
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           a.secure(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
