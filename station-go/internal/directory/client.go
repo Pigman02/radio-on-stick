@@ -3,6 +3,7 @@ package directory
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -55,10 +56,8 @@ var alphabet = []byte("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 
 func normalize(raw string) string {
 	var b strings.Builder
-	for _, r := range strings.ToUpper(strings.TrimSpace(raw)) {
+	for _, r := range strings.ToUpper(raw) {
 		switch r {
-		case ' ', '\t', '\r', '\n', '-', '_':
-			continue
 		case 'I', 'L':
 			r = '1'
 		case 'O':
@@ -66,7 +65,9 @@ func normalize(raw string) string {
 		case 'U':
 			r = 'V'
 		}
-		b.WriteRune(r)
+		if strings.ContainsRune(string(alphabet), r) {
+			b.WriteRune(r)
+		}
 	}
 	return b.String()
 }
@@ -133,7 +134,15 @@ func (c *Client) InviteCode() string {
 }
 
 func (c *Client) Verify(raw string) bool {
-	return normalize(raw) != "" && normalize(raw) == normalize(c.InviteCode())
+	supplied := normalize(raw)
+	expected := normalize(c.InviteCode())
+	if supplied == "" || expected == "" {
+		return false
+	}
+	if len(supplied) == 16 {
+		return subtle.ConstantTimeCompare([]byte(supplied), []byte(expected)) == 1
+	}
+	return strings.Contains(supplied, expected)
 }
 
 func (c *Client) descriptor() map[string]any {

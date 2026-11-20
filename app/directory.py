@@ -26,17 +26,22 @@ _KEY_INVITE_CODE = "directory.invite_code"
 
 
 def normalize_code(raw: str) -> str:
+    """Return the compact Crockford code contained in user input.
+
+    People often paste a whole sentence around the code ("邀请码是 ...，欢迎加入").
+    Keep only characters that can belong to an invitation code after applying
+    the existing I/L -> 1, O -> 0 and U -> V confusion handling.
+    """
     result: list[str] = []
-    for char in str(raw or "").upper().strip():
-        if char in {" ", "\t", "\r", "\n", "-", "_"}:
-            continue
+    for char in str(raw or "").upper():
         if char in {"I", "L"}:
             char = "1"
         elif char == "O":
             char = "0"
         elif char == "U":
             char = "V"
-        result.append(char)
+        if char in _ALPHABET:
+            result.append(char)
     return "".join(result)
 
 
@@ -129,7 +134,11 @@ class DirectoryClient:
             expected = normalize_code(self._invite_code)
         if not supplied or not expected:
             return False
-        return secrets.compare_digest(supplied, expected)
+        # The code may be embedded in a sentence, or the user may paste extra
+        # words. Match the canonical 16-character code within normalized text.
+        if len(supplied) == 16:
+            return secrets.compare_digest(supplied, expected)
+        return expected in supplied
 
     def _request(self, path: str, payload: dict[str, Any], method: str = "POST") -> dict[str, Any]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

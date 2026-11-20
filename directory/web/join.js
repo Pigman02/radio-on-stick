@@ -15,10 +15,10 @@
   function normalize(value) {
     return String(value || "")
       .toUpperCase()
-      .replace(/[\s_-]/g, "")
       .replace(/[IL]/g, "1")
       .replace(/O/g, "0")
-      .replace(/U/g, "V");
+      .replace(/U/g, "V")
+      .replace(/[^0-9A-Z]/g, "");
   }
 
   function setStatus(text, tone = "") {
@@ -28,8 +28,8 @@
 
   async function resolveCode(raw) {
     const code = normalize(raw);
-    if (!/^[0-9A-HJKMNP-TV-Z]{16}$/.test(code)) {
-      setStatus("请输入 16 位邀请码", "error");
+    if (code.length < 16) {
+      setStatus("请输入至少 16 位邀请码", "error");
       return;
     }
     submit.disabled = true;

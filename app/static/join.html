@@ -30,12 +30,12 @@
     <h1>加入电台</h1>
     <p>输入邀请码进入这个电台。</p>
     <form id="joinForm" autocomplete="off">
-      <input id="code" maxlength="24" placeholder="16 位邀请码" aria-label="邀请码" required>
+      <input id="code" maxlength="200" placeholder="邀请码，可粘贴整句" aria-label="邀请码" required>
       <button id="submit" type="submit">加入</button>
     </form>
     <p id="status" role="status"></p>
     <p class="note">邀请码由电台管理员提供。管理员 token 不会出现在邀请链接里。</p>
   </main>
-  <script src="/join.js"></script>
+  <script src="/join.js?v=2"></script>
 </body>
 </html>

@@ -22,6 +22,7 @@ const (
 	stationProtocol   = "radio-station/1"
 	directoryProtocol = "radio-directory/1"
 	inviteProtocol    = "radio-invite/1:"
+	inviteAlphabet    = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 )
 
 var (
@@ -230,10 +231,8 @@ func (s *Store) count() int {
 
 func normalizeCode(raw string) string {
 	var b strings.Builder
-	for _, r := range strings.ToUpper(strings.TrimSpace(raw)) {
+	for _, r := range strings.ToUpper(raw) {
 		switch r {
-		case ' ', '\t', '\r', '\n', '-', '_':
-			continue
 		case 'I', 'L':
 			r = '1'
 		case 'O':
@@ -241,7 +240,9 @@ func normalizeCode(raw string) string {
 		case 'U':
 			r = 'V'
 		}
-		b.WriteRune(r)
+		if strings.ContainsRune(inviteAlphabet, r) {
+			b.WriteRune(r)
+		}
 	}
 	return b.String()
 }
@@ -515,17 +516,25 @@ func (a *App) resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := normalizeCode(req.Code)
-	if !codePattern.MatchString(code) {
+	if len(code) < 16 {
 		jsonError(w, http.StatusBadRequest, "invalid_code", "邀请码格式错误")
 		return
 	}
-	rec, ok := a.store.byCodeHash(codeHash(code))
-	if !ok {
-		jsonError(w, http.StatusNotFound, "invalid_code", "邀请码无效")
-		return
+	var rec *Record
+	// A pasted invitation sentence can contain prose around the 16-character
+	// code. Try every 16-character window in the normalized text and keep the
+	// first live station. This also applies the same I/L/O/U normalization.
+	for offset := 0; offset+16 <= len(code); offset++ {
+		candidate := code[offset : offset+16]
+		if found, exists := a.store.byCodeHash(codeHash(candidate)); exists {
+			if time.Since(time.Unix(found.LastSeen, 0)) <= 15*time.Minute {
+				rec = found
+				break
+			}
+		}
 	}
-	if time.Since(time.Unix(rec.LastSeen, 0)) > 15*time.Minute {
-		jsonError(w, http.StatusServiceUnavailable, "station_stale", "电台暂时离线")
+	if rec == nil {
+		jsonError(w, http.StatusNotFound, "invalid_code", "邀请码无效")
 		return
 	}
 	open := map[string]any{
