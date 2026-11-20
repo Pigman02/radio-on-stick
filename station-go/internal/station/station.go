@@ -59,6 +59,7 @@ type State struct {
 	settings    map[string]any
 	policy      map[string]any
 	persistPath string
+	listeners   int
 }
 
 func New(index *library.Index, name string) *State {
@@ -97,6 +98,14 @@ func (s *State) advanceLocked() {
 	s.started = time.Now()
 	s.seq++
 	s.audioRev++
+	for index := range s.requests {
+		switch {
+		case s.requests[index].TrackID == s.current.ID:
+			s.requests[index].Status = "playing"
+		case s.requests[index].Status == "playing":
+			s.requests[index].Status = "played"
+		}
+	}
 }
 
 func (s *State) tickLocked(now time.Time) {
@@ -143,6 +152,9 @@ func (s *State) Skip() {
 func (s *State) Request(track library.Track, nickname string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.current.ID == track.ID {
+		return
+	}
 	s.nextID++
 	s.history = append([]History{{
 		ID: fmt.Sprintf("h%d", s.nextID), TrackID: track.ID, Title: track.Title,
@@ -163,16 +175,8 @@ func (s *State) Request(track library.Track, nickname string) {
 		Artist: track.Artist, Nickname: nickname, Status: "pending",
 		CreatedAt: time.Now().UnixMilli(),
 	})
-	for _, item := range s.queue {
-		if item.ID == track.ID {
-			return
-		}
-	}
-	if s.current.ID == track.ID {
-		return
-	}
-	s.queue = append([]library.Track{track}, s.queue...)
 	s.advanceLocked()
+
 }
 
 func (s *State) Current() library.Track {
@@ -193,6 +197,9 @@ func (s *State) SnapshotLocked() map[string]any {
 	position := int64(0)
 	startedMS := int64(0)
 	if s.current.ID != "" {
+		if s.started.IsZero() {
+			s.started = now
+		}
 		startedMS = s.started.UnixMilli()
 		position = now.Sub(s.started).Milliseconds()
 		if s.current.DurationMS > 0 && position > s.current.DurationMS {
@@ -226,8 +233,8 @@ func (s *State) SnapshotLocked() map[string]any {
 		"seq": s.seq, "audio_rev": s.audioRev, "server_time_ms": now.UnixMilli(),
 		"started_at_ms": startedMS, "position_ms": position,
 		"duration_ms": s.current.DurationMS, "paused": s.paused,
-		"track": entry(s.current), "next": next, "listeners": 1,
-		"vote": map[string]any{"votes": len(s.votes), "needed": 3, "voted": false},
+		"track": entry(s.current), "next": next, "listeners": s.listeners,
+		"vote": map[string]any{"votes": len(s.votes), "needed": s.voteNeededLocked(), "voted": false},
 	}
 }
 
@@ -235,17 +242,19 @@ func (s *State) State() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tickLocked(time.Now())
-	upcoming := make([]library.Track, len(s.queue))
-	copy(upcoming, s.queue)
 	messages := make([]Message, len(s.messages))
 	copy(messages, s.messages)
 	history := make([]History, len(s.history))
 	copy(history, s.history)
-	requests := make([]QueueEntry, len(s.requests))
-	copy(requests, s.requests)
+	requests := make([]QueueEntry, 0, len(s.requests))
+	for _, entry := range s.requests {
+		if entry.Status == "pending" {
+			requests = append(requests, entry)
+		}
+	}
 	return map[string]any{
-		"now": s.SnapshotLocked(), "upcoming": upcoming, "queue": requests,
-		"messages": messages, "history": history, "listeners": 1,
+		"now": s.SnapshotLocked(), "upcoming": requests, "queue": requests,
+		"messages": messages, "history": history, "listeners": s.listeners,
 	}
 }
 
@@ -317,7 +326,7 @@ func (s *State) Vote(client string) (bool, bool) {
 		return false, false
 	}
 	s.votes[client] = true
-	if len(s.votes) >= 3 {
+	if len(s.votes) >= s.voteNeededLocked() {
 		s.votes = map[string]bool{}
 		s.current = library.Track{}
 		s.started = time.Time{}
@@ -427,6 +436,23 @@ func (s *State) saveLocked() {
 		"settings": s.settings, "policy": s.policy,
 	}, "", "  ")
 	_ = os.WriteFile(s.persistPath, raw, 0o600)
+}
+
+func (s *State) SetListeners(count int) {
+	s.mu.Lock()
+	if count < 1 {
+		count = 1
+	}
+	s.listeners = count
+	s.mu.Unlock()
+}
+
+func (s *State) voteNeededLocked() int {
+	needed := s.listeners/2 + 1
+	if needed < 2 {
+		needed = 2
+	}
+	return needed
 }
 
 func (s *State) Name() string { return s.name }

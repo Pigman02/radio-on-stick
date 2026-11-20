@@ -46,6 +46,8 @@ type api struct {
 	backgroundFile string
 	pluginMu      sync.Mutex
 	pluginCache   map[string]plugins.Candidate
+	listenerMu    sync.Mutex
+	listeners     map[string]time.Time
 }
 
 func env(key, fallback string) string {
@@ -142,11 +144,48 @@ func (a *api) stream(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(track.Path), info.ModTime(), file)
 }
 
+func (a *api) clientIP(r *http.Request) string {
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		if first := strings.TrimSpace(strings.Split(forwarded, ",")[0]); first != "" {
+			return first
+		}
+	}
+	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
+		return real
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func (a *api) touchListener(r *http.Request) int {
+	now := time.Now()
+	client := a.clientIP(r)
+	a.listenerMu.Lock()
+	a.listeners[client] = now
+	for key, seen := range a.listeners {
+		if now.Sub(seen) > 35*time.Second {
+			delete(a.listeners, key)
+		}
+	}
+	count := len(a.listeners)
+	a.listenerMu.Unlock()
+	if count < 1 {
+		count = 1
+	}
+	a.state.SetListeners(count)
+	return count
+}
+
 func (a *api) now(w http.ResponseWriter, r *http.Request) {
+	a.touchListener(r)
 	writeJSON(w, 200, a.state.Snapshot())
 }
 
 func (a *api) stateJSON(w http.ResponseWriter, r *http.Request) {
+	a.touchListener(r)
 	writeJSON(w, 200, a.state.State())
 }
 
@@ -605,10 +644,8 @@ func (a *api) messages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) voteSkip(w http.ResponseWriter, r *http.Request) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+	a.touchListener(r)
+	host := a.clientIP(r)
 	voted, switched := a.state.Vote(host)
 	now := a.state.Snapshot()
 	if vote, ok := now["vote"].(map[string]any); ok {
@@ -872,6 +909,7 @@ func main() {
 		backgroundsDir: env("RADIO_GO_BACKGROUNDS", "data/backgrounds"),
 		backgroundFile: env("RADIO_GO_BACKGROUND_URLS", "data/station-go-backgrounds.json"),
 		pluginCache: map[string]plugins.Candidate{},
+		listeners:   map[string]time.Time{},
 	}
 	if raw, err := os.ReadFile(a.backgroundFile); err == nil {
 		_ = json.Unmarshal(raw, &a.backgroundURLs)
