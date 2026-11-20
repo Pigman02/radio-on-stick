@@ -617,6 +617,13 @@ func (a *api) secure(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/admin", http.StatusFound)
 			return
 		}
+		// Direct server access is the owner, so the local player/queue/listener
+		// APIs must work without an invite cookie. Proxied requests carry
+		// X-Forwarded-For and are deliberately excluded above.
+		if a.ownerIP(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !a.joinRequired || public[r.URL.Path] || strings.HasPrefix(r.URL.Path, "/api/admin/") || strings.HasPrefix(r.URL.Path, "/backgrounds/") || a.validJoin(r) {
 			next.ServeHTTP(w, r)
 			return
