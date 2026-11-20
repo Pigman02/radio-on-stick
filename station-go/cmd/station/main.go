@@ -202,10 +202,14 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 		a.pluginMu.Lock()
 		item, cached := a.pluginCache[body.TrackID]
 		a.pluginMu.Unlock()
-		resolved, err := a.plugins.Resolve(source, sourceID)
-		if err != nil || resolved.AudioURL == "" {
-			writeJSON(w, 502, map[string]any{"error": "private_source_failed"})
-			return
+		resolved := item
+		if !cached || resolved.AudioURL == "" {
+			var err error
+			resolved, err = a.plugins.Resolve(source, sourceID)
+			if err != nil || resolved.AudioURL == "" {
+				writeJSON(w, 502, map[string]any{"error": "private_source_failed"})
+				return
+			}
 		}
 		if cached {
 			if resolved.Title == "" {
