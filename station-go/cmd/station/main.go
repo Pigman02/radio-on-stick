@@ -54,6 +54,41 @@ type api struct {
 	mp3Mu         sync.Mutex
 	mp3Cache      map[string]bool
 	ownerIPs      map[string]bool
+	limitMu       sync.Mutex
+	limits        map[string]map[string][]int64
+}
+
+func (a *api) allow(kind, key string, limit int, window time.Duration) bool {
+	if limit <= 0 {
+		return true
+	}
+	now := time.Now().UnixMilli()
+	cutoff := now - window.Milliseconds()
+	a.limitMu.Lock()
+	defer a.limitMu.Unlock()
+	bucket := a.limits[kind]
+	if bucket == nil {
+		bucket = map[string][]int64{}
+		a.limits[kind] = bucket
+	}
+	items := bucket[key]
+	kept := items[:0]
+	for _, stamp := range items {
+		if stamp >= cutoff {
+			kept = append(kept, stamp)
+		}
+	}
+	if len(kept) >= limit {
+		bucket[key] = kept
+		return false
+	}
+	bucket[key] = append(kept, now)
+	return true
+}
+
+func (a *api) rateLimited(w http.ResponseWriter, kind string) {
+	w.Header().Set("Retry-After", "30")
+	writeJSON(w, 429, map[string]any{"error": "rate_limited", "message": kind + " 操作过于频繁，请稍后再试"})
 }
 
 func env(key, fallback string) string {
@@ -314,6 +349,10 @@ func (a *api) config(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) request(w http.ResponseWriter, r *http.Request) {
+	if !a.allow("request", a.clientIP(r), 5, time.Minute) {
+		a.rateLimited(w, "点歌")
+		return
+	}
 	if !a.policyEnabled("requests_enabled") {
 		writeJSON(w, 403, map[string]any{"error": "requests_disabled"})
 		return
@@ -631,6 +670,44 @@ func (a *api) validJoin(r *http.Request) bool {
 	return join.Verify(a.joinSecret, cookie.Value, a.directory.InviteCode())
 }
 
+func (a *api) listenerLimitReached(r *http.Request) bool {
+	raw, ok := a.state.Policy()["max_listeners"]
+	if !ok {
+		return false
+	}
+	limit := 0
+	switch value := raw.(type) {
+	case float64:
+		limit = int(value)
+	case int:
+		limit = value
+	case int64:
+		limit = int(value)
+	}
+	if limit <= 0 {
+		return false
+	}
+	key := ""
+	if cookie, err := r.Cookie("radio_lid"); err == nil {
+		key = cookie.Value
+	}
+	now := time.Now()
+	a.listenerMu.Lock()
+	defer a.listenerMu.Unlock()
+	if key != "" {
+		if seen, exists := a.listeners[key]; exists && now.Sub(seen) <= 35*time.Second {
+			return false
+		}
+	}
+	active := 0
+	for _, seen := range a.listeners {
+		if now.Sub(seen) <= 35*time.Second {
+			active++
+		}
+	}
+	return active >= limit
+}
+
 func (a *api) secure(next http.Handler) http.Handler {
 	public := map[string]bool{
 		"/join": true, "/join/": true,
@@ -650,6 +727,11 @@ func (a *api) secure(next http.Handler) http.Handler {
 		// X-Forwarded-For and are deliberately excluded above.
 		if a.ownerIP(r) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if a.listenerLimitReached(r) && (r.URL.Path == "/" || r.URL.Path == "/index.html" || r.URL.Path == "/now.json" || r.URL.Path == "/api/state" || r.URL.Path == "/ws") {
+			w.Header().Set("Retry-After", "15")
+			writeJSON(w, 503, map[string]any{"error": "access_full", "message": "当前听众人数已满，请稍后再试"})
 			return
 		}
 		if !a.joinRequired || public[r.URL.Path] || strings.HasPrefix(r.URL.Path, "/api/admin/") || strings.HasPrefix(r.URL.Path, "/backgrounds/") || a.validJoin(r) {
@@ -821,6 +903,10 @@ func (a *api) queueCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) queuePin(w http.ResponseWriter, r *http.Request) {
+	if !a.allow("pin", a.clientIP(r), 10, time.Minute) {
+		a.rateLimited(w, "置顶")
+		return
+	}
 	var body struct {
 		QueueID int64 `json:"queue_id"`
 	}
@@ -836,6 +922,10 @@ func (a *api) queuePin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) upload(w http.ResponseWriter, r *http.Request) {
+	if !a.allow("upload", a.clientIP(r), 5, time.Minute) {
+		a.rateLimited(w, "上传")
+		return
+	}
 	if !a.policyEnabled("uploads_enabled") {
 		writeJSON(w, 403, map[string]any{"error": "uploads_disabled"})
 		return
@@ -886,6 +976,10 @@ func (a *api) messages(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, 200, map[string]any{"messages": a.state.Messages()})
 	case http.MethodPost:
+		if !a.allow("message", a.clientIP(r), 10, time.Minute) {
+			a.rateLimited(w, "留言")
+			return
+		}
 		if !a.policyEnabled("messages_enabled") {
 			writeJSON(w, 403, map[string]any{"error": "messages_disabled"})
 			return
@@ -911,6 +1005,10 @@ func (a *api) messages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) voteSkip(w http.ResponseWriter, r *http.Request) {
+	if !a.allow("vote", a.clientIP(r), 10, time.Minute) {
+		a.rateLimited(w, "投票")
+		return
+	}
 	host := a.touchListener(w, r, r.URL.Query().Get("nickname"))
 	voted, switched := a.state.Vote(host)
 	now := a.state.Snapshot()
@@ -1078,6 +1176,9 @@ func (a *api) adminTrackDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "bad_json"})
 		return
 	}
+	if a.state.Current().ID == body.TrackID {
+		a.state.Skip()
+	}
 	a.index.Remove(body.TrackID)
 	a.state.Rebuild()
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -1153,6 +1254,10 @@ func (a *api) adminDeleteMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
+	if !a.allow("search", a.clientIP(r), 20, time.Minute) {
+		a.rateLimited(w, "搜索")
+		return
+	}
 	query := r.URL.Query().Get("q")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 30 {
@@ -1280,6 +1385,7 @@ func main() {
 		listenerNames: map[string]string{},
 		mp3Cache:      map[string]bool{},
 		ownerIPs:      ownerSet(env("RADIO_OWNER_IPS", "127.0.0.1,::1")),
+		limits:        map[string]map[string][]int64{},
 	}
 	if raw, err := os.ReadFile(a.backgroundFile); err == nil {
 		_ = json.Unmarshal(raw, &a.backgroundURLs)

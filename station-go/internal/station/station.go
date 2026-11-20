@@ -28,6 +28,36 @@ type History struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+type savedTrack struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Artist     string `json:"artist"`
+	Album      string `json:"album"`
+	DurationMS int64  `json:"duration_ms"`
+	Format     string `json:"format,omitempty"`
+	Path       string `json:"path,omitempty"`
+	URL        string `json:"url,omitempty"`
+	Source     string `json:"source,omitempty"`
+	SourceID   string `json:"source_id,omitempty"`
+	CoverURL   string `json:"cover_url,omitempty"`
+}
+
+func saveTrack(track library.Track) savedTrack {
+	return savedTrack{
+		ID: track.ID, Title: track.Title, Artist: track.Artist, Album: track.Album,
+		DurationMS: track.DurationMS, Format: track.Format, Path: track.Path, URL: track.URL,
+		Source: track.Source, SourceID: track.SourceID, CoverURL: track.CoverURL,
+	}
+}
+
+func loadTrack(track savedTrack) library.Track {
+	return library.Track{
+		ID: track.ID, Title: track.Title, Artist: track.Artist, Album: track.Album,
+		DurationMS: track.DurationMS, Format: track.Format, Path: track.Path, URL: track.URL,
+		Source: track.Source, SourceID: track.SourceID, CoverURL: track.CoverURL,
+	}
+}
+
 type QueueEntry struct {
 	QueueID   int64  `json:"queue_id"`
 	TrackID   string `json:"track_id"`
@@ -103,19 +133,10 @@ func (s *State) Rebuild() {
 	s.queue = queue
 	if s.current.ID == "" {
 		s.advanceLocked()
-		return
 	}
-	if !valid[s.current.ID] {
-		// The current track itself was deleted. Only in this case is a new
-		// playback epoch required; deleting any other track must not restart
-		// the audio that is already playing.
-		s.current = library.Track{}
-		s.started = time.Time{}
-		s.pausedPosition = 0
-		s.seq++
-		s.audioRev++
-		s.advanceLocked()
-	}
+	// A restored remote track is not in the local index. Preserve it unless
+	// the admin explicitly deletes the current track (adminTrackDelete calls
+	// Skip first).
 }
 
 func (s *State) advanceLocked() {
@@ -558,8 +579,8 @@ func (s *State) SetPersistPath(path string) {
 			History  []History       `json:"history"`
 			Messages []Message       `json:"messages"`
 			Requests       []QueueEntry    `json:"requests"`
-			Current        library.Track   `json:"current"`
-			Queue          []library.Track `json:"queue"`
+			Current        *savedTrack      `json:"current"`
+			Queue          []savedTrack     `json:"queue"`
 			StartedAtMS    int64           `json:"started_at_ms"`
 			Paused         bool            `json:"paused"`
 			PausedPosition int64           `json:"paused_position_ms"`
@@ -585,9 +606,12 @@ func (s *State) SetPersistPath(path string) {
 			if payload.Requests != nil {
 				s.requests = payload.Requests
 			}
-			if payload.Current.ID != "" {
-				s.current = payload.Current
-				s.queue = payload.Queue
+			if payload.Current != nil && payload.Current.ID != "" {
+				s.current = loadTrack(*payload.Current)
+				s.queue = make([]library.Track, 0, len(payload.Queue))
+				for _, item := range payload.Queue {
+					s.queue = append(s.queue, loadTrack(item))
+				}
 				s.started = time.UnixMilli(payload.StartedAtMS)
 				s.paused = payload.Paused
 				s.pausedPosition = payload.PausedPosition
@@ -599,6 +623,14 @@ func (s *State) SetPersistPath(path string) {
 	s.mu.Unlock()
 }
 
+func saveTracks(tracks []library.Track) []savedTrack {
+	result := make([]savedTrack, 0, len(tracks))
+	for _, track := range tracks {
+		result = append(result, saveTrack(track))
+	}
+	return result
+}
+
 func (s *State) saveLocked() {
 	if s.persistPath == "" {
 		return
@@ -607,7 +639,7 @@ func (s *State) saveLocked() {
 	raw, _ := json.MarshalIndent(map[string]any{
 		"settings": s.settings, "policy": s.policy,
 		"history": s.history, "messages": s.messages, "requests": s.requests,
-		"current": s.current, "queue": s.queue,
+		"current": saveTrack(s.current), "queue": saveTracks(s.queue),
 		"started_at_ms": s.started.UnixMilli(), "paused": s.paused,
 		"paused_position_ms": s.pausedPosition, "seq": s.seq,
 		"audio_rev": s.audioRev,
