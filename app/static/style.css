@@ -5555,3 +5555,93 @@ html[data-theme="light"] .player-dock .volume-toggle.muted {
 .chat-page .message-form.live .send-btn {
   right: calc(5% + 5px);
 }
+
+/* ---------- Seamless left-only marquee ---------- */
+/* The old text-indent alternate animation bounced back at the right edge and
+   looked like a twitch when the title was only slightly wider than its box. */
+#title.marquee,
+#currentLyricText.marquee,
+#currentLyricTrans.marquee {
+  animation: none !important;
+  text-indent: 0 !important;
+}
+
+.marquee-track {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 32px;
+  width: max-content;
+  white-space: nowrap;
+  will-change: transform;
+  animation: marquee-left var(--marquee-duration, 12s) linear infinite;
+}
+
+.marquee-copy {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+@keyframes marquee-left {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--marquee-shift, -100%)); }
+}
+
+/* Full-bleed progress line across the viewport, independent of dock padding. */
+.player-dock .progress {
+  width: 100vw;
+  max-width: none;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+}
+
+/* Give the portrait volume popover a contrasting track instead of painting
+   the whole control the same dark colour as its groove. */
+@media (orientation: portrait) {
+  .dock-volume.volume-open::before {
+    content: "";
+    position: absolute;
+    z-index: 89;
+    left: 50%;
+    bottom: calc(100% + 10px);
+    width: 34px;
+    height: 112px;
+    transform: translateX(-50%);
+    border-radius: 18px;
+    background: rgba(13, 20, 33, 0.96);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
+    pointer-events: none;
+  }
+
+  .dock-volume.volume-open input[type="range"] {
+    background:
+      linear-gradient(
+        90deg,
+        transparent calc(50% - 2px),
+        rgba(255, 255, 255, 0.58) calc(50% - 2px),
+        rgba(255, 255, 255, 0.58) calc(50% + 2px),
+        transparent calc(50% + 2px)
+      );
+    background-color: transparent;
+  }
+}
+
+/* Portrait volume: dark floating control with a separate light groove. */
+@media (orientation: portrait) {
+  .dock-volume.volume-open input[type="range"] {
+    background: transparent !important;
+  }
+
+  .dock-volume.volume-open::after {
+    content: "";
+    position: absolute;
+    z-index: 89;
+    left: 50%;
+    bottom: calc(100% + 18px);
+    width: 3px;
+    height: 96px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.62);
+    pointer-events: none;
+  }
+}

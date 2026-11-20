@@ -202,34 +202,60 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function setupMarquee(element, force = false) {
-  if (!element) return;
-  const text = String(element.textContent || "").trim();
-  if (!text) {
-    element.classList.remove("marquee");
-    element.dataset.marqueeText = "";
-    element.style.removeProperty("--marquee-distance");
-    element.style.removeProperty("--marquee-duration");
-    return;
-  }
-  // Re-rendering a track must not restart an already-running marquee.  This
-  // was why a long title only moved a few pixels and then snapped back.
-  if (!force && element.dataset.marqueeText === text) return;
-  element.dataset.marqueeText = text;
-  if (element.classList.contains("hidden") || element.clientWidth < 2) {
-    element.classList.remove("marquee");
-    return;
+function restoreMarqueeText(element, text) {
+  const track = element.querySelector(".marquee-track");
+  if (track) {
+    element.textContent = text;
   }
   element.classList.remove("marquee");
   element.style.removeProperty("--marquee-distance");
   element.style.removeProperty("--marquee-duration");
+  element.style.removeProperty("--marquee-shift");
+}
+
+function setupMarquee(element, force = false) {
+  if (!element) return;
+  const existingTrack = element.querySelector(".marquee-track");
+  const text = existingTrack
+    ? String(element.dataset.marqueeText || "").trim()
+    : String(element.textContent || "").trim();
+  if (!text) {
+    restoreMarqueeText(element, "");
+    element.dataset.marqueeText = "";
+    return;
+  }
+  // Re-rendering a track must not restart an already-running marquee.
+  if (!force && element.dataset.marqueeText === text) return;
+  element.dataset.marqueeText = text;
+  if (element.classList.contains("hidden") || element.clientWidth < 2) {
+    restoreMarqueeText(element, text);
+    return;
+  }
+  restoreMarqueeText(element, text);
   requestAnimationFrame(() => {
     if (element.dataset.marqueeText !== text) return;
     const overflow = Math.max(0, element.scrollWidth - element.clientWidth);
     if (overflow < 4) return;
-    element.style.setProperty("--marquee-distance", `-${overflow}px`);
-    element.style.setProperty("--marquee-duration", `${Math.max(5, overflow / 22)}s`);
-    element.classList.add("marquee");
+    const track = document.createElement("span");
+    track.className = "marquee-track";
+    const first = document.createElement("span");
+    first.className = "marquee-copy";
+    first.textContent = text;
+    const second = document.createElement("span");
+    second.className = "marquee-copy";
+    second.setAttribute("aria-hidden", "true");
+    second.textContent = text;
+    track.append(first, second);
+    element.textContent = "";
+    element.appendChild(track);
+    requestAnimationFrame(() => {
+      if (element.dataset.marqueeText !== text) return;
+      const gap = 32;
+      const shift = Math.max(1, first.getBoundingClientRect().width + gap);
+      element.style.setProperty("--marquee-shift", `-${shift}px`);
+      element.style.setProperty("--marquee-duration", `${Math.max(7, shift / 22)}s`);
+      element.classList.add("marquee");
+    });
   });
 }
 
