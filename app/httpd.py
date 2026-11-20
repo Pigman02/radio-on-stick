@@ -529,6 +529,8 @@ class RadioHandler(BaseHTTPRequestHandler):
         return self.rfile.read(length)
 
     def _require_admin(self) -> None:
+        if self._is_local_owner():
+            return
         token = self.app.config.admin_token
         if not token:
             raise ApiError(503, "admin_disabled", "未配置管理 token")
@@ -764,6 +766,11 @@ class RadioHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/api/admin/owner":
+            if not self._is_local_owner():
+                raise ApiError(403, "not_owner", "仅服务器本机")
+            self._send_json(200, {"ok": True, "owner": True})
+            return
         if path == "/api/admin/state":
             self._require_admin()
             self._send_json(
@@ -824,6 +831,13 @@ class RadioHandler(BaseHTTPRequestHandler):
             if not file_path.is_file():
                 raise ApiError(404, "not_found", "音频不存在")
             self._send_media_file(file_path)
+            return
+        if path in {"/", "/index.html"} and self._is_local_owner():
+            self.send_response(302)
+            self.send_header("Location", "/admin")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
         if path in {"/admin", "/admin/"}:
             admin_page = self.app.config.static_dir / "index.html"

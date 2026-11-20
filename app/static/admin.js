@@ -175,6 +175,7 @@
     tabs.setAttribute("role", "tablist");
     const tabDefs = [
       ["tracks", "曲目库"],
+      ["library", "资料库"],
       ["policy", "准入与格式"],
       ["page", "页面与背景"],
       ["directory", "电台目录"],
@@ -408,6 +409,7 @@
   function renderAll() {
     if (!state.data) return;
     renderTracks();
+    renderLibrary();
     renderPolicy();
     renderPage();
     renderDirectory();
@@ -494,11 +496,64 @@
 
   function renderTabPlaceholder(body) {
     if (state.tab === "tracks") return renderTracks(body);
+    if (state.tab === "library") return renderLibrary(body);
     if (state.tab === "policy") return renderPolicy(body);
     if (state.tab === "page") return renderPage(body);
     if (state.tab === "directory") return renderDirectory(body);
     if (state.tab === "access") return renderAccess(body);
     if (state.tab === "messages") return renderMessages(body);
+  }
+
+  function renderLibrary(body = $("adminConsoleBody")) {
+    if (!body) return;
+    if (state.tab !== "library") return;
+    clear(body);
+    const wrap = section("服务器资料库", "扫描服务器本机目录");
+    const library = state.data.library || {};
+    const dirs = Array.isArray(library.dirs) ? library.dirs : [];
+    wrap.appendChild(el("p", "admin-note", `当前索引曲目：${library.tracks || 0}`));
+    const label = el("label", "admin-field");
+    label.appendChild(el("span", "", "音乐目录（每行一个）"));
+    const textarea = document.createElement("textarea");
+    textarea.rows = 6;
+    textarea.value = dirs.join("\n");
+    textarea.placeholder = "/Users/you/Music\n/Volumes/Archive/Music";
+    label.appendChild(textarea);
+    wrap.appendChild(label);
+    const status = el("p", "form-status");
+    wrap.appendChild(status);
+    wrap.appendChild(button("保存并扫描", "primary-btn", async () => {
+      const values = textarea.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+      status.textContent = "正在扫描…";
+      status.dataset.tone = "busy";
+      try {
+        const data = await api("/api/admin/library", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dirs: values }),
+        });
+        status.textContent = `已索引 ${data.tracks} 首`;
+        status.dataset.tone = "ok";
+        await loadState(true);
+      } catch (error) {
+        status.textContent = errorText(error, "扫描失败");
+        status.dataset.tone = "error";
+      }
+    }));
+    wrap.appendChild(button("仅重新扫描", "ghost-btn", async () => {
+      status.textContent = "正在重新扫描…";
+      try {
+        const data = await api("/api/admin/library/scan", { method: "POST" });
+        status.textContent = `已索引 ${data.tracks} 首`;
+        status.dataset.tone = "ok";
+        await loadState(true);
+      } catch (error) {
+        status.textContent = errorText(error, "扫描失败");
+        status.dataset.tone = "error";
+      }
+    }));
+    wrap.appendChild(el("p", "admin-note", "目录必须已存在于服务器本机；上传目录会自动包含。"));
+    body.appendChild(wrap);
   }
 
   function renderTracks(body = $("adminConsoleBody")) {
@@ -932,18 +987,19 @@
     }
   });
   if (IS_ADMIN_PAGE) {
-    if (state.token) {
-      loadState();
-    } else {
-      detectOwner().then((owner) => {
-        if (owner) {
-          state.owner = true;
-          openConsole(false);
-        } else {
-          openConsole(true);
-        }
-      });
-    }
+    // Local/server access wins over a stale token from an earlier session.
+    detectOwner().then((owner) => {
+      if (owner) {
+        state.token = "";
+        state.owner = true;
+        sessionSet(K_TOKEN, null);
+        openConsole(false);
+      } else if (state.token) {
+        loadState();
+      } else {
+        openConsole(true);
+      }
+    });
   }
   document.addEventListener("input", (event) => {
     if (event.target && event.target.closest("#adminConsole")) state.dirty = true;

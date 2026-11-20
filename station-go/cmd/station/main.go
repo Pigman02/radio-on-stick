@@ -45,6 +45,7 @@ type api struct {
 	backgroundMu sync.Mutex
 	backgroundURLs []string
 	backgroundFile string
+	libraryFile   string
 	pluginMu      sync.Mutex
 	pluginCache   map[string]plugins.Candidate
 	listenerMu    sync.Mutex
@@ -864,6 +865,65 @@ func (a *api) lyrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"track_id": trackID, "lrc": lrc, "translation": translation})
 }
 
+func (a *api) adminLibrary(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, 200, map[string]any{"ok": true, "dirs": a.libraryDir, "tracks": a.index.Count()})
+		return
+	}
+	var body struct {
+		Dirs []string `json:"dirs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	dirs := make([]string, 0, len(body.Dirs))
+	for _, item := range body.Dirs {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if info, err := os.Stat(item); err != nil || !info.IsDir() {
+			writeJSON(w, 400, map[string]any{"error": "bad_directory", "path": item})
+			return
+		}
+		dirs = append(dirs, item)
+	}
+	a.libraryDir = dirs
+	raw, _ := json.MarshalIndent(dirs, "", "  ")
+	_ = os.MkdirAll(filepath.Dir(a.libraryFile), 0o755)
+	_ = os.WriteFile(a.libraryFile, raw, 0o600)
+	count, err := a.index.Scan(append(append([]string{}, dirs...), a.uploadsDir), 50000)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": "scan_failed", "message": err.Error()})
+		return
+	}
+	a.state.Rebuild()
+	writeJSON(w, 200, map[string]any{"ok": true, "dirs": dirs, "tracks": count})
+}
+
+func (a *api) adminLibraryScan(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "method"})
+		return
+	}
+	count, err := a.index.Scan(append(append([]string{}, a.libraryDir...), a.uploadsDir), 50000)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": "scan_failed", "message": err.Error()})
+		return
+	}
+	a.state.Rebuild()
+	writeJSON(w, 200, map[string]any{"ok": true, "tracks": count})
+}
+
 func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(r) {
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
@@ -875,6 +935,7 @@ func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
 		"messages": state["messages"], "history": state["history"],
 		"policy": a.state.Policy(), "settings": a.state.Settings(),
 		"tracks": a.index.List(200), "backgrounds": a.backgroundItems(),
+		"library": map[string]any{"dirs": a.libraryDir, "tracks": a.index.Count()},
 		"directory": func() any { if a.directory == nil { return map[string]any{"enabled": false} }; return a.directory.Status(true) }(),
 	}
 	writeJSON(w, 200, result)
@@ -1055,6 +1116,13 @@ func main() {
 			clean = append(clean, strings.TrimSpace(dir))
 		}
 	}
+	libraryFile := env("RADIO_GO_LIBRARY_CONFIG", "data/station-go-library.json")
+	if raw, err := os.ReadFile(libraryFile); err == nil {
+		var saved []string
+		if json.Unmarshal(raw, &saved) == nil && len(saved) > 0 {
+			clean = saved
+		}
+	}
 	backgroundsDir := env("RADIO_GO_BACKGROUNDS", "data/backgrounds")
 	if err := os.MkdirAll(backgroundsDir, 0o755); err != nil {
 		log.Printf("backgrounds dir: %v", err)
@@ -1105,6 +1173,7 @@ func main() {
 		plugins:    plugins.New(env("RADIO_PRIVATE_PYTHON", "python3"), env("RADIO_PRIVATE_HELPER", "private/plugins/commercial/helper.py")),
 		backgroundsDir: env("RADIO_GO_BACKGROUNDS", "data/backgrounds"),
 		backgroundFile: env("RADIO_GO_BACKGROUND_URLS", "data/station-go-backgrounds.json"),
+		libraryFile:   libraryFile,
 		pluginCache: map[string]plugins.Candidate{},
 		listeners:   map[string]time.Time{},
 		listenerNames: map[string]string{},
@@ -1159,7 +1228,8 @@ func main() {
 	mux.HandleFunc("/api/library", a.list)
 	mux.HandleFunc("/api/library/track/", a.track)
 	mux.HandleFunc("/api/library/stream/", a.stream)
-	mux.HandleFunc("/api/admin/library/scan", a.scan)
+	mux.HandleFunc("/api/admin/library", a.adminLibrary)
+	mux.HandleFunc("/api/admin/library/scan", a.adminLibraryScan)
 	addr := env("RADIO_GO_ADDR", "127.0.0.1:8091")
 	go func() {
 		ticker := time.NewTicker(time.Hour)

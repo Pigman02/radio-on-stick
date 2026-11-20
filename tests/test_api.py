@@ -318,11 +318,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(data["error"], "queue_full")
 
     def test_admin_requires_token(self):
-        status, data = self.request("POST", "/api/admin/skip")
+        # Simulate a public request. Direct loopback requests are the server
+        # owner and intentionally need no token.
+        remote = {"X-Forwarded-For": "203.0.113.9"}
+        status, data = self.request("POST", "/api/admin/skip", headers=remote)
         self.assertEqual(status, 401)
         self.assertEqual(data["error"], "unauthorized")
 
-        status, data = self.request("POST", "/api/admin/skip", token="secret")
+        status, data = self.request(
+            "POST", "/api/admin/skip", token="secret", headers=remote
+        )
         self.assertEqual(status, 200, data)
         self.assertTrue(data["ok"])
 
