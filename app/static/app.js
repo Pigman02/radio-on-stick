@@ -2027,11 +2027,12 @@ function scrollLyricsTo(top, behavior) {
 }
 
 function markLyricsManualScroll() {
-  if (!state.lyricsOpen) return;
+  const landscapeLyrics = window.matchMedia("(orientation: landscape)").matches;
+  if (!state.lyricsOpen && !landscapeLyrics) return;
   state.lyricsManualAt = Date.now();
   clearTimeout(state.lyricsManualTimer);
   state.lyricsManualTimer = setTimeout(() => {
-    if (!state.lyricsOpen) return;
+    if (!state.lyricsOpen && !window.matchMedia("(orientation: landscape)").matches) return;
     state.lyricsManualAt = 0;
     refreshCurrentLyric();
   }, 3000);

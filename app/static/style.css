@@ -5735,3 +5735,17 @@ html[data-theme="light"] .volume-flyout input[type="range"]::-moz-range-thumb {
   background: #bd6d1e;
   border-color: #ffffff;
 }
+
+/* ---------- Bounded lyric scrolling ----------
+   The old 45vh top/bottom padding let the first line be dragged to the very
+   bottom and the last line to the very top. Keep only a small breathing edge
+   so the scroll range is bounded by the actual lyric content. */
+.lyrics-panel .lyrics-scroll {
+  padding-top: 20px !important;
+  padding-bottom: 20px !important;
+}
+
+.lyrics-panel .lyrics {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
