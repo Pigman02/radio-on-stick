@@ -13,6 +13,7 @@ import (
 
 	"radio-on-stick/station-go/internal/library"
 	"radio-on-stick/station-go/internal/station"
+	"radio-on-stick/station-go/internal/stream"
 )
 
 type api struct {
@@ -21,6 +22,7 @@ type api struct {
 	adminToken string
 	scanMu     sync.Mutex
 	state      *station.State
+	source     *stream.Hub
 }
 
 func env(key, fallback string) string {
@@ -179,6 +181,31 @@ func (a *api) pause(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
+	track := a.state.Current()
+	manifest, err := a.source.Manifest(track)
+	if err != nil {
+		writeJSON(w, 409, map[string]any{"error": "no_stream"})
+		return
+	}
+	writeJSON(w, 200, manifest)
+}
+
+func (a *api) sourceChunk(w http.ResponseWriter, r *http.Request) {
+	streamID, _ := strconv.ParseUint(r.URL.Query().Get("stream_id"), 10, 32)
+	seq, _ := strconv.ParseUint(r.URL.Query().Get("seq"), 10, 32)
+	frame, err := a.source.Chunk(uint32(streamID), uint32(seq))
+	if err != nil {
+		writeJSON(w, 404, map[string]any{"error": "chunk_unavailable"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.Itoa(len(frame)))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(200)
+	_, _ = w.Write(frame)
+}
+
 func (a *api) native(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/native/")
 	track, ok := a.index.Get(id)
@@ -223,6 +250,7 @@ func main() {
 		libraryDir: clean,
 		adminToken: os.Getenv("RADIO_GO_ADMIN_TOKEN"),
 		state:      state,
+		source:     stream.NewHub(),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
@@ -233,6 +261,8 @@ func main() {
 	mux.HandleFunc("/api/admin/skip", a.skip)
 	mux.HandleFunc("/api/admin/pause", a.pause)
 	mux.HandleFunc("/native/", a.native)
+	mux.HandleFunc("/source/manifest", a.sourceManifest)
+	mux.HandleFunc("/source/chunk", a.sourceChunk)
 	mux.HandleFunc("/api/library/search", a.search)
 	mux.HandleFunc("/api/library", a.list)
 	mux.HandleFunc("/api/library/track/", a.track)
