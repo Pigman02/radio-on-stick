@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <title>猫娘电台</title>
   <link rel="icon" href="/placeholder.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css?v=60">
+  <link rel="stylesheet" href="/style.css?v=63">
 </head>
 <body>
   <div class="bg-layer" id="bgLayerA" aria-hidden="true"></div>
@@ -126,8 +126,9 @@
           <svg class="icon stroke-icon icon-up hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
         </button>
         <div class="center-controls">
-          <button id="libraryBtn" class="icon-btn library-btn" type="button" aria-label="点歌与列表" title="点歌与列表">
+          <button id="libraryBtn" class="icon-btn library-btn" type="button" aria-label="歌曲列表" title="歌曲列表">
             <svg class="icon stroke-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h10"/><path d="M18 15v5m-2.5-2.5h5"/></svg>
+            <span class="control-label">歌曲列表</span>
             <span id="libraryBadge" class="badge hidden">0</span>
           </button>
           <button id="playBtn" class="play-btn" type="button" aria-label="播放">
@@ -136,12 +137,14 @@
           </button>
           <button id="voteSkipBtn" class="icon-btn vote-btn" type="button" aria-label="投票切歌" title="投票切歌" disabled>
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h3.3v13H5zM11 5.5l8 6.5-8 6.5z"/></svg>
+            <span class="control-label">投票切歌</span>
             <span id="voteInfo" class="badge hidden">0</span>
           </button>
         </div>
         <div class="volume dock-volume">
-          <button id="muteBtn" class="icon-btn" type="button" aria-label="静音" title="静音">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2l4.3 3.5c.7.6 1.8.1 1.8-.8V6.8c0-.9-1.1-1.4-1.8-.8L7.2 9.5H4Zm12.1-1.9a6.2 6.2 0 0 1 0 8.8l1.4 1.4a8.2 8.2 0 0 0 0-11.6l-1.4 1.4Z"/></svg>
+          <button id="muteBtn" class="icon-btn volume-toggle" type="button" aria-label="静音" title="静音">
+            <svg class="icon volume-on-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2l4.3 3.5c.7.6 1.8.1 1.8-.8V6.8c0-.9-1.1-1.4-1.8-.8L7.2 9.5H4Zm12.1-1.9a6.2 6.2 0 0 1 0 8.8l1.4 1.4a8.2 8.2 0 0 0 0-11.6l-1.4 1.4Z"/></svg>
+            <svg class="icon volume-off-icon hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2l4.3 3.5c.7.6 1.8.1 1.8-.8V6.8c0-.9-1.1-1.4-1.8-.8L7.2 9.5H4Z"/><path d="m15.5 9.5 5 5m0-5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           </button>
           <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="音量">
         </div>
@@ -255,6 +258,6 @@
   </div>
 
   <script src="/mesh.js?v=13"></script>
-  <script src="/app.js?v=88"></script>
+  <script src="/app.js?v=89"></script>
 </body>
 </html>

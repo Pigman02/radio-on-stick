@@ -42,6 +42,11 @@ const voteSkipBtn = $("voteSkipBtn");
 const voteInfo = $("voteInfo");
 const muteBtn = $("muteBtn");
 const volumeEl = $("volume");
+const dockVolume = document.querySelector(".dock-volume");
+const volumeOnIcon = muteBtn ? muteBtn.querySelector(".volume-on-icon") : null;
+const volumeOffIcon = muteBtn ? muteBtn.querySelector(".volume-off-icon") : null;
+const portraitMedia = window.matchMedia("(orientation: portrait)");
+let volumePanelOpen = false;
 const audioMode = $("audioMode");
 const sourceBadge = $("sourceBadge");
 const cover = $("cover");
@@ -3010,16 +3015,58 @@ playBtn.addEventListener("click", () => {
 
 voteSkipBtn.addEventListener("click", voteSkip);
 
+function updateMuteUI() {
+  const muted = Boolean(audio.muted);
+  muteBtn.classList.toggle("muted", muted);
+  muteBtn.setAttribute("aria-pressed", String(muted));
+  muteBtn.setAttribute("aria-label", muted ? "取消静音" : "静音");
+  muteBtn.title = muted ? "取消静音" : "静音";
+  if (volumeOnIcon) volumeOnIcon.classList.toggle("hidden", muted);
+  if (volumeOffIcon) volumeOffIcon.classList.toggle("hidden", !muted);
+}
+
+function setVolumePanel(open) {
+  volumePanelOpen = Boolean(open);
+  if (!dockVolume) return;
+  dockVolume.classList.toggle("volume-open", volumePanelOpen);
+  muteBtn.setAttribute("aria-expanded", String(volumePanelOpen));
+}
+
 muteBtn.addEventListener("click", () => {
+  if (portraitMedia.matches) {
+    if (!volumePanelOpen) {
+      setVolumePanel(true);
+      return;
+    }
+    audio.muted = !audio.muted;
+    if (!audio.muted) {
+      audio.volume = clamp(Number(volumeEl.value), 0, 1);
+    }
+    setVolumePanel(false);
+    updateMuteUI();
+    return;
+  }
   audio.muted = !audio.muted;
-  muteBtn.setAttribute("aria-label", audio.muted ? "取消静音" : "静音");
-  muteBtn.style.color = audio.muted ? "var(--faint)" : "";
+  updateMuteUI();
 });
 
 volumeEl.addEventListener("input", () => {
+  audio.muted = false;
   audio.volume = clamp(Number(volumeEl.value), 0, 1);
   storageSet("radio.volume", volumeEl.value);
+  updateMuteUI();
 });
+
+document.addEventListener("pointerdown", (event) => {
+  if (!volumePanelOpen) return;
+  if (dockVolume && dockVolume.contains(event.target)) return;
+  setVolumePanel(false);
+});
+
+if (portraitMedia.addEventListener) {
+  portraitMedia.addEventListener("change", () => setVolumePanel(false));
+}
+updateMuteUI();
 
 for (const eventName of ["wheel", "touchstart", "pointerdown"]) {
   lyricsScroll.addEventListener(eventName, markLyricsManualScroll, { passive: true });
