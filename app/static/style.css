@@ -5256,3 +5256,68 @@ html[data-theme="light"] .admin-console-backdrop {
   top: 10px;
   transform: none;
 }
+
+/* ---------- Narrow the bottom dock to 80% width ---------- */
+.player-dock {
+  width: 80vw;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 18px;
+  padding-right: 18px;
+  border-radius: 18px 18px 0 0;
+}
+
+.player-dock .progress {
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+@media (max-width: 680px) {
+  .player-dock {
+    width: 80vw;
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 13px;
+    padding-right: 13px;
+  }
+
+  .player-dock .progress {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
+
+/* ---------- Small portrait screens: fit and scroll the whole playback page ----------
+   The earlier 42vh cover rule has higher specificity, so override that exact
+   selector rather than only .cover-button. The remaining height is reserved
+   for track metadata, current lyric and the next-track row. */
+@media (orientation: portrait) and (max-height: 700px) {
+  .playback-page:not(.lyrics-open) .cover-button {
+    width: min(68vw, clamp(120px, calc(100dvh - 445px), 360px));
+  }
+
+  .playback-page:not(.lyrics-open) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .playback-page:not(.lyrics-open) .current-lyric,
+  .playback-page:not(.lyrics-open) .next-track-info {
+    flex-shrink: 0;
+  }
+}
+
+/* Scrolling is a safety net for unusually tall lyric rows; do not draw a
+   permanent scrollbar rail over the cover/lyrics on phones. */
+.playback-page:not(.lyrics-open) {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.playback-page:not(.lyrics-open)::-webkit-scrollbar {
+  display: none;
+}
