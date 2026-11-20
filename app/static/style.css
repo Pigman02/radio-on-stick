@@ -5076,3 +5076,114 @@ button.listener-pill:hover {
 .nickname-admin .ghost-btn {
   align-self: flex-start;
 }
+
+/* ---------- Light playback and full-screen lyrics ---------- */
+/* Keep the playback surface genuinely light. The older theme block made the
+   page dark while only the dock/drawer were light, which produced a dark
+   overlay with white type in light mode. */
+html[data-theme="light"] {
+  --bg: #e9edf4;
+  --bg-soft: #f7f9fc;
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-strong: rgba(255, 255, 255, 0.96);
+  --line: rgba(22, 35, 57, 0.10);
+  --line-strong: rgba(22, 35, 57, 0.18);
+  --text: #172033;
+  --muted: #5d6980;
+  --faint: #7d89a0;
+  --accent: #bd6d1e;
+  --accent-soft: rgba(189, 109, 30, 0.12);
+  --mint: #1f8e76;
+  --mint-soft: rgba(31, 142, 118, 0.10);
+  --danger: #c94f60;
+}
+
+html[data-theme="light"] body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+html[data-theme="light"] .backdrop {
+  background:
+    radial-gradient(1000px 700px at 15% -10%, rgba(255, 255, 255, 0.62), transparent 62%),
+    radial-gradient(800px 600px at 100% 0, rgba(31, 142, 118, 0.07), transparent 55%),
+    linear-gradient(180deg, rgba(245, 248, 252, 0.82) 0%, rgba(232, 239, 247, 0.92) 55%, rgba(222, 231, 242, 0.96) 100%);
+}
+
+html[data-theme="light"] .bg-layer.cover {
+  filter: blur(26px) brightness(0.96) saturate(0.82);
+}
+
+html[data-theme="light"] .bg-layer.local {
+  filter: brightness(1.0) saturate(0.9);
+}
+
+html[data-theme="light"] .topbar,
+html[data-theme="light"] .topbar .brand h1,
+html[data-theme="light"] .topbar .listener-pill,
+html[data-theme="light"] .playback-page,
+html[data-theme="light"] .chat-page {
+  color: var(--text);
+}
+
+html[data-theme="light"] .topbar .icon-btn,
+html[data-theme="light"] .playback-page .icon-btn,
+html[data-theme="light"] .chat-page .icon-btn,
+html[data-theme="light"] .modal .icon-btn,
+html[data-theme="light"] .admin-console .icon-btn {
+  color: #3f4c62;
+  background: rgba(22, 35, 57, 0.065);
+}
+
+html[data-theme="light"] .topbar .icon-btn:hover,
+html[data-theme="light"] .playback-page .icon-btn:hover,
+html[data-theme="light"] .chat-page .icon-btn:hover,
+html[data-theme="light"] .modal .icon-btn:hover,
+html[data-theme="light"] .admin-console .icon-btn:hover {
+  color: #172033;
+  background: rgba(22, 35, 57, 0.12);
+}
+
+html[data-theme="light"] .modal {
+  background: rgba(232, 239, 247, 0.62);
+}
+
+html[data-theme="light"] .modal-card {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.72), transparent 38%),
+    var(--panel-strong);
+  box-shadow: 0 30px 90px rgba(26, 39, 61, 0.18);
+}
+
+html[data-theme="light"] .drawer {
+  --text: #172033;
+  --muted: #5d6980;
+  --faint: #7d89a0;
+  --line: rgba(22, 35, 57, 0.10);
+  --line-strong: rgba(22, 35, 57, 0.18);
+  --accent: #bd6d1e;
+  --accent-soft: rgba(189, 109, 30, 0.12);
+}
+
+html[data-theme="light"] .lyrics-panel .lyric-line.active .lyric-text,
+html[data-theme="light"] .lyrics-panel .lyric-line.active {
+  color: var(--text);
+}
+
+html[data-theme="light"] .lyrics-panel .lyric-line.active .lyric-translation,
+html[data-theme="light"] .current-lyric-trans,
+html[data-theme="light"] #currentLyricTrans {
+  color: var(--mint) !important;
+}
+
+html[data-theme="light"] #translationToggle[aria-pressed="true"] {
+  color: var(--mint);
+  background: var(--mint-soft);
+}
+
+html[data-theme="light"] .lyrics-panel .lyrics-scroll {
+  mask-image: linear-gradient(180deg, transparent 0, black 10%, black 90%, transparent 100%);
+}
+html[data-theme="light"] .admin-console-backdrop {
+  background: rgba(232, 239, 247, 0.60);
+}

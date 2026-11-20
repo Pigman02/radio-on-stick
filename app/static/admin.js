@@ -1019,6 +1019,19 @@
       login();
     }
   });
+  function ensureOwnerConsole() {
+    if (!IS_ADMIN_PAGE) return;
+    if ($("adminConsole") && !$("adminConsole").classList.contains("hidden")) return;
+    detectOwner().then((owner) => {
+      if (owner) {
+        state.token = "";
+        state.owner = true;
+        sessionSet(K_TOKEN, null);
+        openConsole(false);
+      }
+    });
+  }
+
   if (IS_ADMIN_PAGE) {
     // Local/server access wins over a stale token from an earlier session.
     detectOwner().then((owner) => {
@@ -1033,6 +1046,11 @@
         openConsole(true);
       }
     });
+    // Safari/Edge may resolve the first owner probe before the extension CSS
+    // has laid out the console. Retry once so direct server access opens with
+    // one navigation and no extra click.
+    setTimeout(ensureOwnerConsole, 900);
+    setTimeout(ensureOwnerConsole, 2200);
   }
   document.addEventListener("input", (event) => {
     if (event.target && event.target.closest("#adminConsole")) state.dirty = true;
