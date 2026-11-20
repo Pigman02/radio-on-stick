@@ -110,6 +110,7 @@ const state = {
   sourceIndex: 0,
   clockOffset: 0,
   userWantsPlay: false,
+  localPausedPositionMs: null,
   pendingSeekMs: 0,
   lastLoadedSeq: null,
   lyricsTrackId: null,
@@ -1145,11 +1146,41 @@ function seekToLive() {
     return;
   }
   const live = currentPosition();
-  if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+  if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+    // A live HTTP source may not expose a seekable duration. Re-open it at
+    // the authoritative position instead of resuming from stale media time.
+    if (state.sources.length) {
+      state.localPausedPositionMs = null;
+      loadDirectSource(live);
+      attemptPlay();
+    }
+    return;
+  }
   const target = Math.min(live / 1000, Math.max(0, audio.duration - 0.35));
   if (Math.abs(audio.currentTime - target) > 0.8) {
     try {
       audio.currentTime = target;
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+function syncPlaybackPosition(now = state.now, force = false) {
+  if (!now || !now.track || state.serverPaused || !state.userWantsPlay) return;
+  const target = currentPosition(now);
+  if (mesh && mesh.isActive()) {
+    if (!audio.paused) mesh.seekLive();
+    return;
+  }
+  if (!audio.src || audio.paused) return;
+  const duration = Number(audio.duration);
+  if (!Number.isFinite(duration) || duration <= 0) return;
+  if (target >= duration * 1000 - 500) return;
+  const drift = target - audio.currentTime * 1000;
+  if (Math.abs(drift) > (force ? 900 : 1800)) {
+    try {
+      audio.currentTime = Math.max(0, Math.min(target / 1000, duration - 0.35));
     } catch (_) {
       /* ignore */
     }
@@ -1605,24 +1636,27 @@ function applyNow(now) {
     state.lyricsTrackId = now.track.id;
     state.lastReportKey = null;
     state.lastPositionSec = -1;
+    state.localPausedPositionMs = null;
+    if (mesh) mesh.setPaused(false);
     clearStalledTimer();
     loadLyrics(now.lyrics_url, now.track.id);
+    const startPosition = currentPosition(now);
     if (
       state.userWantsPlay &&
       sources.length &&
       (!(mesh && mesh.isActive()) || manualTrackSwitch) &&
-      adoptPreloaded(sources[0], 0)
+      adoptPreloaded(sources[0], startPosition)
     ) {
       // The preloaded next track took over; no silence between tracks.
     } else if (
       state.userWantsPlay &&
       sources.length &&
       (!(mesh && mesh.isActive()) || manualTrackSwitch) &&
-      crossfadeToUrl(sources[0], 0)
+      crossfadeToUrl(sources[0], startPosition)
     ) {
       // A not-yet-ready direct source still overlaps the old audio.
     } else if (state.userWantsPlay && sources.length) {
-      loadSource(currentPosition(now));
+      loadSource(startPosition);
     } else {
       unloadAudio();
       state.audioState = sources.length ? "idle" : "error";
@@ -1658,6 +1692,7 @@ function applyNow(now) {
     attemptPlay();
   }
 
+  syncPlaybackPosition(now);
   setLivePill();
   updatePlayButton();
   updateVoteUI(now);
@@ -2773,8 +2808,14 @@ function updateMediaSessionPosition(now = state.now) {
   const timestamp = Date.now();
   if (timestamp - state.lastMediaPositionAt < 5_000) return;
   const duration = Number(now.duration_ms) || 0;
+  const locallyPaused = state.serverPaused || !state.userWantsPlay || audio.paused;
   const useLocal = Boolean(audio.src) && audio.readyState > 0;
-  const position = useLocal ? audio.currentTime * 1000 : currentPosition(now);
+  const position =
+    locallyPaused && state.localPausedPositionMs !== null
+      ? state.localPausedPositionMs
+      : locallyPaused && useLocal
+      ? audio.currentTime * 1000
+      : currentPosition(now);
   if (duration <= 0 || !Number.isFinite(position)) return;
   state.lastMediaPositionAt = timestamp;
   try {
@@ -2800,6 +2841,8 @@ function setupMediaSession() {
   register("play", () => {
     if (!state.now || !state.now.track || state.serverPaused) return;
     state.userWantsPlay = true;
+    state.localPausedPositionMs = null;
+    if (mesh) mesh.setPaused(false);
     if (!ensureSourceLoaded()) {
       seekToLive();
       attemptPlay();
@@ -2807,7 +2850,9 @@ function setupMediaSession() {
     updatePlayButton();
   });
   register("pause", () => {
+    state.localPausedPositionMs = currentPosition(state.now);
     state.userWantsPlay = false;
+    if (mesh) mesh.setPaused(true);
     audio.pause();
     stopPreload();
     updatePlayButton();
@@ -2833,13 +2878,19 @@ function frame() {
   if (document.hidden) return;
   const now = state.now;
   if (now && now.track) {
-    const meshPosition = mesh && mesh.isActive() ? mesh.positionMs() : null;
     const useLocal = Boolean(audio.src) && audio.readyState > 0;
+    const locallyPaused = state.serverPaused || !state.userWantsPlay || audio.paused;
+    // While playing, the server timeline is authoritative so two clients
+    // cannot show different progress. A locally paused reader keeps the
+    // position captured at the moment pause was pressed, not raw media time
+    // (which is relative to a P2P/MSE stream that may have started late).
+    const pausedPosition =
+      state.serverPaused
+        ? currentPosition(now)
+        : state.localPausedPositionMs;
     const position =
-      meshPosition !== null
-        ? Math.max(0, meshPosition)
-        : useLocal
-        ? Math.max(0, audio.currentTime * 1000)
+      locallyPaused && pausedPosition !== null
+        ? Math.max(0, pausedPosition)
         : currentPosition(now);
     const duration = Number(now.duration_ms) || 0;
     const percent = duration > 0 ? clamp((position / duration) * 100, 0, 100) : 0;
@@ -2861,8 +2912,12 @@ function frame() {
 playBtn.addEventListener("click", () => {
   if (!state.now || !state.now.track || state.serverPaused) return;
   if (!audio.paused) {
+    state.localPausedPositionMs = currentPosition(state.now);
     state.userWantsPlay = false;
-    if (mesh) mesh.setWanted(false);
+    // Keep the mesh source pump alive while paused. The server timeline
+    // continues, and retaining the incoming MSE buffer lets resume seek to
+    // the live edge instead of replaying a stale stream from its old origin.
+    if (mesh) mesh.setPaused(true);
     audio.pause();
     stopPreload();
     updatePlayButton();
@@ -2874,7 +2929,11 @@ playBtn.addEventListener("click", () => {
     return;
   }
   state.userWantsPlay = true;
-  if (mesh) mesh.setWanted(true);
+  state.localPausedPositionMs = null;
+  if (mesh) {
+    mesh.setPaused(false);
+    mesh.setWanted(true);
+  }
   if (ensureSourceLoaded()) {
     preloadNext();
     updatePlayButton();

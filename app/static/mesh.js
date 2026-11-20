@@ -74,6 +74,7 @@
   let role = null;
   let active = false;
   let wanted = false;
+  let userPaused = false;
   let trackSeq = 0;
   let trackId = "";
   let audioRev = 0;
@@ -92,6 +93,7 @@
   let sourcePump = null;
   let sourceStartFailures = 0;
   let lastCatchupAt = 0;
+  let lastResyncAt = 0;
   let sourceToken = 0;
 
   const upstreams = new Map();
@@ -1204,6 +1206,7 @@
     lastCatchupAt = 0;
     active = true;
     wanted = true;
+    userPaused = false;
     accepted = freshAccepted();
     currentStream = null;
     fallbackReason = "";
@@ -1270,6 +1273,7 @@
   function stop() {
     active = false;
     wanted = false;
+    userPaused = false;
     stopSource();
     resetMedia();
     currentStream = null;
@@ -1310,10 +1314,14 @@
       return;
     }
     if (sourceRole() && wanted && !sourcePump) startSource();
-    if (!nextNow.paused && wanted && audioEl.paused && media && media.started) {
+    if (!nextNow.paused && wanted && !userPaused && audioEl.paused && media && media.started) {
       // applyNow() may have paused us; resume once we have media.
       audioEl.play().catch(() => {});
     }
+  }
+
+  function setPaused(value) {
+    userPaused = Boolean(value);
   }
 
   function setWanted(value) {
@@ -1358,6 +1366,25 @@
       end = null;
     }
     if (end !== null) {
+      // The paused reader kept fetching chunks, but the source ring/buffer
+      // may not contain the whole wall-clock gap. If the live target is
+      // already past the buffered edge, restart the media timeline at the
+      // newest chunk instead of replaying several seconds behind forever.
+      if (
+        targetSeconds > end + 1.0 &&
+        Date.now() - lastResyncAt > 4_000
+      ) {
+        lastResyncAt = Date.now();
+        if (sourceRole()) {
+          restartSource();
+        } else {
+          const mime = currentStream ? currentStream.mime : "audio/mpeg";
+          accepted = freshAccepted();
+          currentStream = null;
+          if (!setupMedia(mime)) failMesh("mse");
+        }
+        return;
+      }
       const max = Math.max(0, end - 0.25);
       if (targetSeconds >= 0 && targetSeconds <= max) {
         if (
@@ -1440,6 +1467,7 @@
     stop,
     update,
     setWanted,
+    setPaused,
     matches,
     positionMs,
     seekLive,

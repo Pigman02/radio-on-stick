@@ -46,10 +46,11 @@ type State struct {
 	name     string
 	current  library.Track
 	queue    []library.Track
-	seq      int
-	started  time.Time
-	paused   bool
-	audioRev int
+	seq            int
+	started        time.Time
+	paused         bool
+	pausedPosition int64
+	audioRev       int
 	messages []Message
 	history  []History
 	requests []QueueEntry
@@ -108,6 +109,7 @@ func (s *State) Rebuild() {
 		// the audio that is already playing.
 		s.current = library.Track{}
 		s.started = time.Time{}
+		s.pausedPosition = 0
 		s.seq++
 		s.audioRev++
 		s.advanceLocked()
@@ -124,6 +126,7 @@ func (s *State) advanceLocked() {
 	s.current = s.queue[0]
 	s.queue = s.queue[1:]
 	s.started = time.Now()
+	s.pausedPosition = 0
 	s.seq++
 	s.audioRev++
 	for index := range s.requests {
@@ -159,9 +162,30 @@ func (s *State) Tick() {
 func (s *State) Pause(paused bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.paused = paused
 	if paused {
+		if s.paused {
+			return
+		}
+		if s.current.ID != "" && !s.started.IsZero() {
+			position := time.Since(s.started).Milliseconds()
+			if s.current.DurationMS > 0 && position > s.current.DurationMS {
+				position = s.current.DurationMS
+			}
+			if position < 0 {
+				position = 0
+			}
+			s.pausedPosition = position
+		}
+		s.paused = true
 		return
+	}
+	if !s.paused {
+		return
+	}
+	now := time.Now()
+	s.paused = false
+	if s.current.ID != "" && s.pausedPosition > 0 {
+		s.started = now.Add(-time.Duration(s.pausedPosition) * time.Millisecond)
 	}
 	if s.current.ID == "" {
 		s.advanceLocked()
@@ -174,6 +198,7 @@ func (s *State) Skip() {
 	s.votes = map[string]bool{}
 	s.current = library.Track{}
 	s.started = time.Time{}
+	s.pausedPosition = 0
 	s.advanceLocked()
 }
 
@@ -211,7 +236,13 @@ func (s *State) Request(track library.Track, nickname string) {
 func (s *State) PositionMS() int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.current.ID == "" || s.started.IsZero() {
+	if s.current.ID == "" {
+		return 0
+	}
+	if s.paused {
+		return s.pausedPosition
+	}
+	if s.started.IsZero() {
 		return 0
 	}
 	position := time.Since(s.started).Milliseconds()
@@ -248,13 +279,18 @@ func (s *State) SnapshotLocked() map[string]any {
 	position := int64(0)
 	startedMS := int64(0)
 	if s.current.ID != "" {
-		if s.started.IsZero() {
-			s.started = now
-		}
-		startedMS = s.started.UnixMilli()
-		position = now.Sub(s.started).Milliseconds()
-		if s.current.DurationMS > 0 && position > s.current.DurationMS {
-			position = s.current.DurationMS
+		if s.paused {
+			position = s.pausedPosition
+			startedMS = now.UnixMilli() - position
+		} else {
+			if s.started.IsZero() {
+				s.started = now
+			}
+			startedMS = s.started.UnixMilli()
+			position = now.Sub(s.started).Milliseconds()
+			if s.current.DurationMS > 0 && position > s.current.DurationMS {
+				position = s.current.DurationMS
+			}
 		}
 	}
 	entry := func(track library.Track) map[string]any {
