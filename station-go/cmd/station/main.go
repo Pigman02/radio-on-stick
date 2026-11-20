@@ -25,6 +25,7 @@ type api struct {
 	state      *station.State
 	source     *stream.Hub
 	mesh       *mesh.Hub
+	staticDir  string
 }
 
 func env(key, fallback string) string {
@@ -233,6 +234,33 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(track.Path), info.ModTime(), file)
 }
 
+func (a *api) root(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/admin" || r.URL.Path == "/admin/" {
+		http.ServeFile(w, r, filepath.Join(a.staticDir, "index.html"))
+		return
+	}
+	if r.URL.Path == "/join" || r.URL.Path == "/join/" {
+		http.ServeFile(w, r, filepath.Join(a.staticDir, "join.html"))
+		return
+	}
+	http.FileServer(http.Dir(a.staticDir)).ServeHTTP(w, r)
+}
+
+func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	tracks := a.index.Search(query, limit)
+	items := make([]map[string]any, 0, len(tracks))
+	for _, track := range tracks {
+		items = append(items, map[string]any{
+			"source": "local", "source_id": track.ID, "title": track.Title,
+			"artist": track.Artist, "album": track.Album,
+			"duration_ms": track.DurationMS, "cover_url": "",
+		})
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "candidates": items})
+}
+
 func main() {
 	dirs := strings.Split(env("RADIO_LIBRARY_DIRS", ""), string(os.PathListSeparator))
 	clean := make([]string, 0, len(dirs))
@@ -258,6 +286,7 @@ func main() {
 		state:      state,
 		source:     stream.NewHub(),
 		mesh:       mesh.NewHub(),
+		staticDir:  env("RADIO_STATIC_DIR", "app/static"),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
@@ -273,6 +302,8 @@ func main() {
 	mux.HandleFunc("/source/manifest", a.sourceManifest)
 	mux.HandleFunc("/source/chunk", a.sourceChunk)
 	mux.HandleFunc("/api/library/search", a.search)
+	mux.HandleFunc("/api/search", a.searchAll)
+	mux.HandleFunc("/", a.root)
 	mux.HandleFunc("/api/library", a.list)
 	mux.HandleFunc("/api/library/track/", a.track)
 	mux.HandleFunc("/api/library/stream/", a.stream)
