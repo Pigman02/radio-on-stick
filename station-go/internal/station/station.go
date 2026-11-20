@@ -1,11 +1,29 @@
 package station
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"radio-on-stick/station-go/internal/library"
 )
+
+type Message struct {
+	ID        string `json:"id"`
+	Nickname  string `json:"nickname"`
+	Body      string `json:"body"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+type History struct {
+	ID        string `json:"id"`
+	TrackID   string `json:"track_id"`
+	Title     string `json:"title"`
+	Artist    string `json:"artist"`
+	CoverURL  string `json:"cover_url"`
+	Nickname  string `json:"nickname"`
+	CreatedAt int64  `json:"created_at"`
+}
 
 type State struct {
 	mu       sync.RWMutex
@@ -17,6 +35,9 @@ type State struct {
 	started  time.Time
 	paused   bool
 	audioRev int
+	messages []Message
+	history  []History
+	nextID   int
 }
 
 func New(index *library.Index, name string) *State {
@@ -87,9 +108,17 @@ func (s *State) Skip() {
 	s.advanceLocked()
 }
 
-func (s *State) Request(track library.Track) {
+func (s *State) Request(track library.Track, nickname string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.nextID++
+	s.history = append([]History{{
+		ID: fmt.Sprintf("h%d", s.nextID), TrackID: track.ID, Title: track.Title,
+		Artist: track.Artist, Nickname: nickname, CreatedAt: time.Now().UnixMilli(),
+	}}, s.history...)
+	if len(s.history) > 200 {
+		s.history = s.history[:200]
+	}
 	for _, item := range s.queue {
 		if item.ID == track.ID {
 			return
@@ -133,7 +162,7 @@ func (s *State) SnapshotLocked() map[string]any {
 		return map[string]any{
 			"id": track.ID, "source": "local", "title": track.Title,
 			"artist": track.Artist, "album": track.Album,
-			"duration_ms": track.DurationMS,
+			"duration_ms": track.DurationMS, "cover_url": "",
 			"audio": map[string]any{"direct": "/native/" + track.ID},
 		}
 	}
@@ -146,6 +175,7 @@ func (s *State) SnapshotLocked() map[string]any {
 		"started_at_ms": startedMS, "position_ms": position,
 		"duration_ms": s.current.DurationMS, "paused": s.paused,
 		"track": entry(s.current), "next": next, "listeners": 1,
+		"vote": map[string]any{"votes": 0, "needed": 3, "voted": false},
 	}
 }
 
@@ -157,8 +187,36 @@ func (s *State) State() map[string]any {
 	copy(upcoming, s.queue)
 	return map[string]any{
 		"now": s.SnapshotLocked(), "upcoming": upcoming, "queue": []any{},
-		"messages": []any{}, "history": []any{}, "listeners": 1,
+		"messages": s.messages, "history": s.history, "listeners": 1,
 	}
+}
+
+func (s *State) AddMessage(nickname, body string) Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextID++
+	message := Message{ID: fmt.Sprintf("m%d", s.nextID), Nickname: nickname, Body: body, CreatedAt: time.Now().UnixMilli()}
+	s.messages = append(s.messages, message)
+	if len(s.messages) > 200 {
+		s.messages = s.messages[len(s.messages)-200:]
+	}
+	return message
+}
+
+func (s *State) Messages() []Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]Message, len(s.messages))
+	copy(result, s.messages)
+	return result
+}
+
+func (s *State) History() []History {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]History, len(s.history))
+	copy(result, s.history)
+	return result
 }
 
 func (s *State) Name() string { return s.name }

@@ -144,7 +144,8 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		TrackID string `json:"track_id"`
+		TrackID  string `json:"track_id"`
+		Nickname string `json:"nickname"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]any{"error": "bad_json"})
@@ -155,8 +156,8 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "not_found"})
 		return
 	}
-	a.state.Request(track)
-	writeJSON(w, 200, map[string]any{"ok": true})
+	a.state.Request(track, strings.TrimSpace(body.Nickname))
+	writeJSON(w, 200, map[string]any{"ok": true, "track": track})
 }
 
 func (a *api) skip(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +247,59 @@ func (a *api) root(w http.ResponseWriter, r *http.Request) {
 	http.FileServer(http.Dir(a.staticDir)).ServeHTTP(w, r)
 }
 
+func (a *api) messages(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, 200, map[string]any{"messages": a.state.Messages()})
+	case http.MethodPost:
+		var body struct {
+			Nickname string `json:"nickname"`
+			Body     string `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, 400, map[string]any{"error": "bad_json"})
+			return
+		}
+		text := strings.TrimSpace(body.Body)
+		if text == "" || len([]rune(text)) > 200 {
+			writeJSON(w, 400, map[string]any{"error": "bad_message"})
+			return
+		}
+		message := a.state.AddMessage(strings.TrimSpace(body.Nickname), text)
+		writeJSON(w, 200, map[string]any{"ok": true, "message": message})
+	default:
+		writeJSON(w, 405, map[string]any{"error": "method"})
+	}
+}
+
+func (a *api) voteSkip(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"ok": true, "now": a.state.Snapshot(), "switched": false})
+}
+
+func (a *api) report(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.state.Snapshot())
+}
+
+func (a *api) lyrics(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"lines": []any{}, "source": ""})
+}
+
+func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "state": a.state.State(), "tracks": a.index.Count()})
+}
+
+func (a *api) adminDeleteMessage(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -294,6 +348,12 @@ func main() {
 	mux.HandleFunc("/api/state", a.stateJSON)
 	mux.HandleFunc("/api/config", a.config)
 	mux.HandleFunc("/api/request", a.request)
+	mux.HandleFunc("/api/messages", a.messages)
+	mux.HandleFunc("/api/vote-skip", a.voteSkip)
+	mux.HandleFunc("/api/report", a.report)
+	mux.HandleFunc("/api/lyrics/", a.lyrics)
+	mux.HandleFunc("/api/admin/state", a.adminState)
+	mux.HandleFunc("/api/admin/messages/delete", a.adminDeleteMessage)
 	mux.HandleFunc("/api/admin/skip", a.skip)
 	mux.HandleFunc("/api/admin/pause", a.pause)
 	mux.HandleFunc("/native/", a.native)
