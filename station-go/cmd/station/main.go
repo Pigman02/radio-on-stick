@@ -422,8 +422,132 @@ func (a *api) config(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, settings)
 }
 
+func (a *api) requestTrack(trackID string) (library.Track, bool) {
+	history, hasHistory := a.state.HistoryByTrackID(trackID)
+	fillHistory := func(track *library.Track) {
+		if !hasHistory {
+			return
+		}
+		if track.Title == "" { track.Title = history.Title }
+		if track.Artist == "" { track.Artist = history.Artist }
+		if track.CoverURL == "" { track.CoverURL = history.CoverURL }
+		if track.DurationMS == 0 { track.DurationMS = history.DurationMS }
+	}
+	if source, sourceID, found := strings.Cut(trackID, ":"); found {
+		a.pluginMu.Lock()
+		item, cached := a.pluginCache[trackID]
+		a.pluginMu.Unlock()
+		// Bilibili CDN URLs are short-lived. Keep the identity now and resolve
+		// the audio only when native/source playback is about to start.
+		if strings.EqualFold(source, "bilibili") {
+			if item.Title == "" {
+				// Old imported history has only the BVID. Resolve metadata now
+				// but deliberately discard the short-lived audio URL so native/
+				// source can refresh it when playback is actually near.
+				if resolved, err := a.plugins.Resolve(source, sourceID); err == nil {
+					item = resolved
+				}
+			}
+			track := library.Track{
+				ID: trackID, Title: item.Title, Artist: item.Artist,
+				Album: item.Album, DurationMS: item.DurationMS,
+				Source: "bilibili", SourceID: sourceID, CoverURL: item.CoverURL,
+			}
+			fillHistory(&track)
+			return track, true
+		}
+		resolved := item
+		if !cached || resolved.AudioURL == "" {
+			var err error
+			resolved, err = a.plugins.Resolve(source, sourceID)
+			if err != nil || resolved.AudioURL == "" {
+				return library.Track{}, false
+			}
+		}
+		if cached {
+			if resolved.Title == "" { resolved.Title = item.Title }
+			if resolved.Artist == "" { resolved.Artist = item.Artist }
+			if resolved.Album == "" { resolved.Album = item.Album }
+			if resolved.DurationMS == 0 { resolved.DurationMS = item.DurationMS }
+			if resolved.CoverURL == "" { resolved.CoverURL = item.CoverURL }
+		}
+		track := library.Track{
+			ID: trackID, Title: resolved.Title, Artist: resolved.Artist,
+			Album: resolved.Album, DurationMS: resolved.DurationMS,
+			URL: resolved.AudioURL, Source: resolved.Source, SourceID: resolved.SourceID,
+			CoverURL: resolved.CoverURL,
+		}
+		fillHistory(&track)
+		return track, true
+	}
+	if local, found := a.index.Get(trackID); found {
+		return local, true
+	}
+	if queued, found := a.state.TrackByID(trackID); found {
+		return queued, true
+	}
+	history, found := a.state.HistoryByTrackID(trackID)
+	if !found {
+		return library.Track{}, false
+	}
+	return a.trackFromHistory(history)
+}
+
+func (a *api) trackFromHistory(history station.History) (library.Track, bool) {
+	track := library.Track{
+		ID: history.TrackID, Title: history.Title, Artist: history.Artist,
+		DurationMS: history.DurationMS, Source: history.Source,
+		SourceID: history.SourceID, URL: history.URL, CoverURL: history.CoverURL,
+	}
+	if track.Source != "" && !strings.EqualFold(track.Source, "bilibili") && track.SourceID != "" {
+		resolved, err := a.plugins.Resolve(track.Source, track.SourceID)
+		if err == nil && resolved.AudioURL != "" {
+			track.URL = resolved.AudioURL
+			if track.DurationMS == 0 { track.DurationMS = resolved.DurationMS }
+			if track.CoverURL == "" { track.CoverURL = resolved.CoverURL }
+		}
+	}
+	if track.Source == "" {
+		// Old imported history predates source metadata. Resolve by title/artist.
+		query := strings.TrimSpace(track.Title + " " + track.Artist)
+		if query != "" {
+			for _, item := range a.plugins.Search(query) {
+				if item.Source == "" || item.SourceID == "" { continue }
+				track.Source = item.Source
+				track.SourceID = item.SourceID
+				track.DurationMS = item.DurationMS
+				track.CoverURL = item.CoverURL
+				if !strings.EqualFold(item.Source, "bilibili") {
+					track.URL = item.AudioURL
+				}
+				break
+			}
+		}
+	}
+	if track.ID == "" {
+		return library.Track{}, false
+	}
+	if track.URL == "" && track.Source != "bilibili" && track.Source == "" {
+		return library.Track{}, false
+	}
+	return track, true
+}
+
+func (a *api) ensureTrackAudio(track *library.Track) bool {
+	if track == nil || track.ID == "" { return false }
+	if track.URL != "" { return true }
+	if track.Source == "" || track.SourceID == "" { return false }
+	resolved, err := a.plugins.Resolve(track.Source, track.SourceID)
+	if err != nil || resolved.AudioURL == "" { return false }
+	track.URL = resolved.AudioURL
+	if track.DurationMS == 0 { track.DurationMS = resolved.DurationMS }
+	if track.CoverURL == "" { track.CoverURL = resolved.CoverURL }
+	a.state.SetTrackAudio(track.ID, track.URL)
+	return true
+}
+
 func (a *api) request(w http.ResponseWriter, r *http.Request) {
-	if !a.allow("request", a.clientIP(r), 5, time.Minute) {
+	if !a.allow("request", a.clientIP(r), 30, time.Minute) {
 		a.rateLimited(w, "点歌")
 		return
 	}
@@ -452,50 +576,10 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "missing_track_id"})
 		return
 	}
-	var track library.Track
-	if source, sourceID, found := strings.Cut(trackID, ":"); found {
-		a.pluginMu.Lock()
-		item, cached := a.pluginCache[trackID]
-		a.pluginMu.Unlock()
-		resolved := item
-		if !cached || resolved.AudioURL == "" {
-			var err error
-			resolved, err = a.plugins.Resolve(source, sourceID)
-			if err != nil || resolved.AudioURL == "" {
-				writeJSON(w, 502, map[string]any{"error": "private_source_failed"})
-				return
-			}
-		}
-		if cached {
-			if resolved.Title == "" {
-				resolved.Title = item.Title
-			}
-			if resolved.Artist == "" {
-				resolved.Artist = item.Artist
-			}
-			if resolved.Album == "" {
-				resolved.Album = item.Album
-			}
-			if resolved.DurationMS == 0 {
-				resolved.DurationMS = item.DurationMS
-			}
-			if resolved.CoverURL == "" {
-				resolved.CoverURL = item.CoverURL
-			}
-		}
-		track = library.Track{
-			ID: trackID, Title: resolved.Title, Artist: resolved.Artist,
-			Album: resolved.Album, DurationMS: resolved.DurationMS,
-			URL: resolved.AudioURL, Source: resolved.Source, SourceID: resolved.SourceID,
-			CoverURL: resolved.CoverURL,
-		}
-	} else {
-		local, ok := a.index.Get(trackID)
-		if !ok {
-			writeJSON(w, 404, map[string]any{"error": "not_found"})
-			return
-		}
-		track = local
+	track, ok := a.requestTrack(trackID)
+	if !ok {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
 	}
 	if a.banned(body.Nickname) {
 		writeJSON(w, 400, map[string]any{"error": "blocked_word"})
@@ -557,6 +641,10 @@ func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	track := a.state.Current()
+	if track.URL == "" && !a.ensureTrackAudio(&track) {
+		writeJSON(w, 502, map[string]any{"error": "audio_unavailable", "message": "音源解析失败"})
+		return
+	}
 	if mp3Only, ok := a.state.Policy()["mp3_remote_only"].(bool); ok && mp3Only && track.URL != "" && !a.remoteIsMP3(track.URL, track.Source) {
 		writeJSON(w, 415, map[string]any{"error": "mp3_only", "message": "管理员只允许 MP3 第三方音源"})
 		return
@@ -710,6 +798,12 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 		}
 		if !ok {
 			writeJSON(w, 404, map[string]any{"error": "not_found"})
+			return
+		}
+	}
+	if track.URL == "" {
+		if !a.ensureTrackAudio(&track) {
+			writeJSON(w, 502, map[string]any{"error": "audio_unavailable", "message": "音源解析失败"})
 			return
 		}
 	}

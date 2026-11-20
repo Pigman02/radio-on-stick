@@ -19,13 +19,18 @@ type Message struct {
 }
 
 type History struct {
-	ID        string `json:"id"`
-	TrackID   string `json:"track_id"`
-	Title     string `json:"title"`
-	Artist    string `json:"artist"`
-	CoverURL  string `json:"cover_url"`
-	Nickname  string `json:"nickname"`
-	CreatedAt int64  `json:"created_at"`
+	ID                string `json:"id"`
+	TrackID           string `json:"track_id"`
+	Title             string `json:"title"`
+	Artist            string `json:"artist"`
+	CoverURL          string `json:"cover_url"`
+	Nickname          string `json:"nickname"`
+	CreatedAt         int64  `json:"created_at"`
+	DurationMS        int64  `json:"duration_ms"`
+	DurationEstimated bool   `json:"duration_estimated"`
+	Source            string `json:"source,omitempty"`
+	SourceID          string `json:"source_id,omitempty"`
+	URL               string `json:"url,omitempty"`
 }
 
 type savedTrack struct {
@@ -66,10 +71,12 @@ type QueueEntry struct {
 	CoverURL  string `json:"cover_url"`
 	Nickname  string `json:"nickname"`
 	Status    string `json:"status"`
-	CreatedAt int64  `json:"created_at"`
-	PinCount  int    `json:"pin_count"`
-	ClientKey string `json:"-"`
-	CanCancel bool   `json:"can_cancel"`
+	CreatedAt         int64  `json:"created_at"`
+	PinCount          int    `json:"pin_count"`
+	DurationMS        int64  `json:"duration_ms"`
+	DurationEstimated bool   `json:"duration_estimated"`
+	ClientKey         string `json:"-"`
+	CanCancel         bool   `json:"can_cancel"`
 }
 
 type State struct {
@@ -251,7 +258,9 @@ func (s *State) Request(track library.Track, nickname, clientKey string) {
 	entry := History{
 		ID: fmt.Sprintf("h%d", s.nextID), TrackID: track.ID, Title: track.Title,
 		Artist: track.Artist, CoverURL: track.CoverURL, Nickname: nickname,
-		CreatedAt: time.Now().UnixMilli(),
+		CreatedAt: time.Now().UnixMilli(), DurationMS: track.DurationMS,
+		DurationEstimated: track.DurationMS <= 0,
+		Source: track.Source, SourceID: track.SourceID, URL: track.URL,
 	}
 	history := make([]History, 0, len(s.history)+1)
 	history = append(history, entry)
@@ -279,6 +288,7 @@ func (s *State) Request(track library.Track, nickname, clientKey string) {
 		QueueID: s.queueID, TrackID: track.ID, Title: track.Title,
 		Artist: track.Artist, CoverURL: track.CoverURL, Nickname: nickname, Status: "pending",
 		CreatedAt: time.Now().UnixMilli(), ClientKey: clientKey,
+		DurationMS: track.DurationMS, DurationEstimated: track.DurationMS <= 0,
 	})
 	s.advanceLocked()
 	s.saveLocked()
@@ -324,6 +334,35 @@ func (s *State) TrackByID(id string) (library.Track, bool) {
 		}
 	}
 	return library.Track{}, false
+}
+
+func (s *State) HistoryByTrackID(id string) (History, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, item := range s.history {
+		if item.TrackID == id {
+			return item, true
+		}
+	}
+	return History{}, false
+}
+
+func (s *State) SetTrackAudio(id, url string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.current.ID == id {
+		s.current.URL = url
+		s.saveLocked()
+		return true
+	}
+	for index := range s.queue {
+		if s.queue[index].ID == id {
+			s.queue[index].URL = url
+			s.saveLocked()
+			return true
+		}
+	}
+	return false
 }
 
 func (s *State) Current() library.Track {
@@ -617,6 +656,38 @@ func dedupeHistory(items []History) []History {
 	return result
 }
 
+func (s *State) repairMetadataLocked() {
+	byID := map[string]History{}
+	for _, item := range s.history {
+		if item.TrackID != "" { byID[item.TrackID] = item }
+	}
+	fill := func(track *library.Track) {
+		if track.ID == "" || (track.Title != "" && track.DurationMS > 0) { return }
+		if item, ok := byID[track.ID]; ok {
+			if track.Title == "" { track.Title = item.Title }
+			if track.Artist == "" { track.Artist = item.Artist }
+			if track.CoverURL == "" { track.CoverURL = item.CoverURL }
+			if track.DurationMS == 0 { track.DurationMS = item.DurationMS }
+			if track.Source == "" { track.Source = item.Source }
+			if track.SourceID == "" { track.SourceID = item.SourceID }
+			if track.URL == "" { track.URL = item.URL }
+		}
+	}
+	fill(&s.current)
+	for index := range s.queue { fill(&s.queue[index]) }
+	for index := range s.requests {
+		entry := &s.requests[index]
+		if entry.Title == "" || entry.DurationMS == 0 {
+			if item, ok := byID[entry.TrackID]; ok {
+				if entry.Title == "" { entry.Title = item.Title }
+				if entry.Artist == "" { entry.Artist = item.Artist }
+				if entry.CoverURL == "" { entry.CoverURL = item.CoverURL }
+				if entry.DurationMS == 0 { entry.DurationMS = item.DurationMS }
+			}
+		}
+	}
+}
+
 func (s *State) SetPersistPath(path string) {
 	s.mu.Lock()
 	s.persistPath = path
@@ -668,6 +739,8 @@ func (s *State) SetPersistPath(path string) {
 				s.audioRev = payload.AudioRev
 			}
 		}
+		s.repairMetadataLocked()
+		s.saveLocked()
 	}
 	s.mu.Unlock()
 }

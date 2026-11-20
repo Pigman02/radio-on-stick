@@ -72,6 +72,8 @@ def main() -> None:
             "artist": source.get("artist") or "", "cover_url": source.get("cover_url") or "",
             "nickname": row["nickname"] or "", "status": "pending",
             "created_at": int(row["created_at"] or 0), "pin_count": int(row["priority"] or 0),
+            "duration_ms": int(source.get("duration_ms") or 0),
+            "duration_estimated": not bool(source.get("duration_ms")),
         })
 
     history = []
@@ -84,6 +86,10 @@ def main() -> None:
             "title": source.get("title") or "", "artist": source.get("artist") or "",
             "cover_url": source.get("cover_url") or "", "nickname": row["nickname"] or "",
             "created_at": int(row["created_at"] or 0),
+            "duration_ms": int(source.get("duration_ms") or 0),
+            "duration_estimated": not bool(source.get("duration_ms")),
+            "source": source.get("source") or "", "source_id": source.get("source_id") or "",
+            "url": source.get("audio_primary") or "",
         })
 
     messages = []
