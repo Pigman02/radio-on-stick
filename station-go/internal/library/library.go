@@ -218,3 +218,20 @@ func (i *Index) Count() int {
 	defer i.mu.RUnlock()
 	return len(i.tracks)
 }
+
+func (i *Index) Remove(id string) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if _, ok := i.tracks[id]; !ok {
+		return false
+	}
+	delete(i.tracks, id)
+	order := i.order[:0]
+	for _, item := range i.order {
+		if item != id {
+			order = append(order, item)
+		}
+	}
+	i.order = order
+	return true
+}

@@ -65,8 +65,8 @@ func New(index *library.Index, name string) *State {
 			"page_title": name, "background_interval_sec": 300,
 		},
 		policy: map[string]any{
-			"max_listeners": 0, "request_open": true, "upload_open": true,
-			"message_open": true,
+			"max_listeners": 0, "mp3_upload_only": false, "mp3_remote_only": false,
+			"requests_enabled": true, "uploads_enabled": true, "messages_enabled": true,
 		},
 	}
 }
@@ -341,7 +341,7 @@ func (s *State) Settings() map[string]any {
 func (s *State) UpdateSettings(values map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, key := range []string{"station_name", "subtitle", "notice", "page_title"} {
+	for _, key := range []string{"station_name", "subtitle", "notice", "page_title", "background_interval_sec"} {
 		if value, ok := values[key]; ok {
 			s.settings[key] = value
 			if key == "station_name" {
@@ -367,6 +367,24 @@ func (s *State) UpdatePolicy(values map[string]any) {
 	for key, value := range values {
 		s.policy[key] = value
 	}
+}
+
+func (s *State) ClearQueue() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requests = nil
+}
+
+func (s *State) DeleteMessage(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, message := range s.messages {
+		if message.ID == id {
+			s.messages = append(s.messages[:index], s.messages[index+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 func (s *State) Name() string { return s.name }

@@ -485,6 +485,96 @@ func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
+func (a *api) adminClearQueue(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	a.state.ClearQueue()
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) adminQueueDelete(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		QueueID int64 `json:"queue_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	a.state.Cancel(body.QueueID)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) adminTrack(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		CandidateID string `json:"candidate_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	if source, sourceID, found := strings.Cut(body.CandidateID, ":"); found {
+		item, err := a.plugins.Resolve(source, sourceID)
+		if err != nil || item.AudioURL == "" {
+			writeJSON(w, 502, map[string]any{"error": "private_source_failed"})
+			return
+		}
+		a.state.Request(library.Track{
+			ID: body.CandidateID, Title: item.Title, Artist: item.Artist,
+			Album: item.Album, DurationMS: item.DurationMS, URL: item.AudioURL,
+			Source: item.Source, SourceID: item.SourceID,
+		}, "admin")
+	} else if track, ok := a.index.Get(body.CandidateID); ok {
+		a.state.Request(track, "admin")
+	} else {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) adminTrackDelete(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		TrackID string `json:"track_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	a.index.Remove(body.TrackID)
+	a.state.Rebuild()
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) adminHideMessage(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	a.state.DeleteMessage(body.ID)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 func (a *api) adminSettings(w http.ResponseWriter, r *http.Request) {
 	if !a.authorized(r) {
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
@@ -541,7 +631,7 @@ func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{
 			"id": track.ID, "source": "local", "source_id": track.ID,
 			"title": track.Title, "artist": track.Artist, "album": track.Album,
-			"duration_ms": track.DurationMS, "cover_url": "",
+			"duration_ms": track.DurationMS, "cover_url": "", "candidate_id": track.ID,
 		})
 	}
 	if a.plugins != nil && strings.TrimSpace(query) != "" {
@@ -549,14 +639,14 @@ func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 			items = append(items, map[string]any{
 				"id": item.ID, "source": item.Source, "source_id": item.SourceID,
 				"title": item.Title, "artist": item.Artist, "album": item.Album,
-				"duration_ms": item.DurationMS, "cover_url": item.CoverURL,
+				"duration_ms": item.DurationMS, "cover_url": item.CoverURL, "candidate_id": item.ID,
 			})
 		}
 	}
 	if len(items) > limit {
 		items = items[:limit]
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "candidates": items})
+	writeJSON(w, 200, map[string]any{"items": items, "candidates": items, "results": items})
 }
 
 func main() {
@@ -629,6 +719,11 @@ func main() {
 	mux.HandleFunc("/api/admin/state", a.adminState)
 	mux.HandleFunc("/api/admin/directory", a.adminDirectory)
 	mux.HandleFunc("/api/admin/settings", a.adminSettings)
+	mux.HandleFunc("/api/admin/clear-queue", a.adminClearQueue)
+	mux.HandleFunc("/api/admin/queue/delete", a.adminQueueDelete)
+	mux.HandleFunc("/api/admin/track", a.adminTrack)
+	mux.HandleFunc("/api/admin/track/delete", a.adminTrackDelete)
+	mux.HandleFunc("/api/admin/hide-message", a.adminHideMessage)
 	mux.HandleFunc("/api/admin/policy", a.adminPolicy)
 	mux.HandleFunc("/api/admin/messages/delete", a.adminDeleteMessage)
 	mux.HandleFunc("/api/admin/skip", a.skip)
