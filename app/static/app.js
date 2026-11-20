@@ -1529,6 +1529,10 @@ function applyNow(now) {
   const direct = (now.audio && now.audio.direct) || "";
   const alternates = (now.audio && now.audio.alternates) || [];
   const sources = [direct, ...alternates].filter(Boolean);
+  if (sources.length && !state.sources.length) {
+    state.sources = sources;
+    state.sourceIndex = 0;
+  }
 
   renderTrack(now);
   renderNext(now.next || null);
@@ -1768,7 +1772,7 @@ async function loadLyrics(url, trackId) {
     const data = await fetchJSON(url, { timeout: 10_000 });
     if (state.lyricsTrackId !== trackId) return;
     renderLyrics(data.lrc, data.translation);
-  } catch (_) {
+  } catch (error) {
     if (state.lyricsTrackId === trackId) setLyricsEmpty("歌词暂不可用");
   }
 }
@@ -3068,3 +3072,4 @@ setInterval(() => {
 setInterval(() => {
   if (!document.hidden) loadConfig();
 }, 5_000);
+

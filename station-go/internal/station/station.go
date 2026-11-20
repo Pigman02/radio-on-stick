@@ -226,6 +226,7 @@ func (s *State) SnapshotLocked() map[string]any {
 			"id": track.ID, "source": source, "title": track.Title,
 			"artist": track.Artist, "album": track.Album,
 			"duration_ms": track.DurationMS, "cover_url": track.CoverURL,
+			"lyrics_url": "/api/lyrics/" + track.ID,
 			"audio": map[string]any{"direct": direct},
 		}
 	}
@@ -233,11 +234,19 @@ func (s *State) SnapshotLocked() map[string]any {
 	if len(s.queue) > 0 {
 		next = entry(s.queue[0])
 	}
+	direct := ""
+	lyricsURL := ""
+	if s.current.ID != "" {
+		direct = "/native/" + s.current.ID
+		lyricsURL = "/api/lyrics/" + s.current.ID
+	}
 	return map[string]any{
 		"seq": s.seq, "audio_rev": s.audioRev, "server_time_ms": now.UnixMilli(),
 		"started_at_ms": startedMS, "position_ms": position,
 		"duration_ms": s.current.DurationMS, "paused": s.paused,
 		"track": entry(s.current), "next": next, "listeners": s.listeners,
+		"audio": map[string]any{"direct": direct},
+		"lyrics_url": lyricsURL,
 		"vote": map[string]any{"votes": len(s.votes), "needed": s.voteNeededLocked(), "voted": false},
 	}
 }
