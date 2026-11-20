@@ -13,6 +13,7 @@
     busy: false,
     timer: null,
     dirty: false,
+    owner: false,
   };
 
   const el = (tag, className = "", text = "") => {
@@ -53,7 +54,10 @@
       const response = await fetch(path, {
         cache: "no-store",
         ...init,
-        headers: { ...(init.headers || {}), Authorization: `Bearer ${state.token}` },
+        headers: {
+          ...(init.headers || {}),
+          ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+        },
         signal: controller.signal,
       });
       let data = {};
@@ -191,16 +195,32 @@
     });
   }
 
-  function openConsole(showLogin = false) {
+  async function openConsole(showLogin = false) {
     buildConsole();
     const overlay = $("adminConsole");
     overlay.classList.remove("hidden");
     document.body.classList.add("admin-console-open");
     if (state.token) {
       loadState();
-    } else {
-      showLoginView();
-      if (showLogin) setTimeout(() => $("adminToken")?.focus(), 80);
+      return;
+    }
+    if (await detectOwner()) {
+      state.owner = true;
+      loadState();
+      return;
+    }
+    showLoginView();
+    if (showLogin) setTimeout(() => $("adminToken")?.focus(), 80);
+  }
+
+  async function detectOwner() {
+    try {
+      const response = await fetch("/api/admin/owner", { cache: "no-store" });
+      if (!response.ok) return false;
+      const data = await response.json().catch(() => ({}));
+      return Boolean(data && data.owner);
+    } catch (_) {
+      return false;
     }
   }
 
@@ -259,7 +279,7 @@
   }
 
   async function loadState(force = false) {
-    if (!state.token) return;
+    if (!state.token && !state.owner) return;
     try {
       state.data = await api("/api/admin/state");
       showPanelView();
@@ -838,7 +858,14 @@
   if (state.token) {
     loadState();
   } else {
-    openConsole(true);
+    detectOwner().then((owner) => {
+      if (owner) {
+        state.owner = true;
+        openConsole(false);
+      } else {
+        openConsole(true);
+      }
+    });
   }
   document.addEventListener("input", (event) => {
     if (event.target && event.target.closest("#adminConsole")) state.dirty = true;

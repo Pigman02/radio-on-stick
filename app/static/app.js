@@ -3021,7 +3021,7 @@ function loadAdminExtension() {
   style.id = "adminExtensionStyle";
   document.head.appendChild(style);
   const script = document.createElement("script");
-  script.src = "/admin.js?v=22";
+  script.src = "/admin.js?v=23";
   script.id = "adminExtensionScript";
   document.body.appendChild(script);
 }

@@ -76,6 +76,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func (a *api) authorized(r *http.Request) bool {
+	if a.ownerIP(r) {
+		return true
+	}
 	if a.adminToken == "" {
 		return false
 	}
@@ -160,11 +163,26 @@ func ownerSet(raw string) map[string]bool {
 	return result
 }
 
-func (a *api) ownerRequest(r *http.Request) bool {
-	if r.URL.Path != "/" {
+func (a *api) ownerIP(r *http.Request) bool {
+	// Only direct/local requests can be owner. A public request through
+	// Caddy/Relay carries X-Forwarded-For and must never inherit admin rights.
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" {
 		return false
 	}
-	return a.ownerIPs[a.clientIP(r)]
+	ip := a.clientIP(r)
+	return a.ownerIPs[ip]
+}
+
+func (a *api) ownerRequest(r *http.Request) bool {
+	return r.URL.Path == "/" && a.ownerIP(r)
+}
+
+func (a *api) adminOwner(w http.ResponseWriter, r *http.Request) {
+	if !a.ownerIP(r) {
+		writeJSON(w, 403, map[string]any{"error": "not_owner"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "owner": true})
 }
 
 func (a *api) clientIP(r *http.Request) string {
@@ -1112,6 +1130,7 @@ func main() {
 	mux.HandleFunc("/api/vote-skip", a.voteSkip)
 	mux.HandleFunc("/api/report", a.report)
 	mux.HandleFunc("/api/lyrics/", a.lyrics)
+	mux.HandleFunc("/api/admin/owner", a.adminOwner)
 	mux.HandleFunc("/api/admin/state", a.adminState)
 	mux.HandleFunc("/api/admin/directory", a.adminDirectory)
 	mux.HandleFunc("/api/admin/background", a.adminBackground)
