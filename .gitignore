@@ -77,3 +77,6 @@ prototype/
 
 # Private commercial-source implementations (included in release packages only)
 app/sources/private_impl/
+
+# Private commercial plugin implementations
+private/
