@@ -36,6 +36,9 @@ type api struct {
 	source     *stream.Hub
 	mesh       *mesh.Hub
 	meshSTUN   string
+	httpLeafMax int
+	httpLeaves  map[string]time.Time
+	leafMu      sync.Mutex
 	staticDir  string
 	uploadsDir string
 	directory  *directory.Client
@@ -119,11 +122,48 @@ func splitWords(raw string) []string {
 	return result
 }
 
+func envInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" { return fallback }
+	value, err := strconv.Atoi(raw)
+	if err != nil { return fallback }
+	return value
+}
+
 func env(key, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 		return value
 	}
 	return fallback
+}
+
+func (a *api) admitHTTPLeaf(w http.ResponseWriter, r *http.Request) bool {
+	if strings.ToLower(strings.TrimSpace(r.Header.Get("X-Radio-Source-Role"))) != "http" {
+		return true
+	}
+	limit := a.httpLeafMax
+	if limit <= 0 {
+		return true
+	}
+	key := a.clientIP(r)
+	now := time.Now()
+	a.leafMu.Lock()
+	for ip, seen := range a.httpLeaves {
+		if now.Sub(seen) > 60*time.Second {
+			delete(a.httpLeaves, ip)
+		}
+	}
+	_, exists := a.httpLeaves[key]
+	count := len(a.httpLeaves)
+	if !exists && count >= limit {
+		a.leafMu.Unlock()
+		w.Header().Set("Retry-After", "10")
+		writeJSON(w, 429, map[string]any{"error": "http_leaf_busy", "message": "HTTP 直连叶子已达到上限，请稍后重试"})
+		return false
+	}
+	a.httpLeaves[key] = now
+	a.leafMu.Unlock()
+	return true
 }
 
 func (a *api) health(w http.ResponseWriter, r *http.Request) {
@@ -513,6 +553,9 @@ func (a *api) mediaUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
+	if !a.admitHTTPLeaf(w, r) {
+		return
+	}
 	track := a.state.Current()
 	if mp3Only, ok := a.state.Policy()["mp3_remote_only"].(bool); ok && mp3Only && track.URL != "" && !a.remoteIsMP3(track.URL) {
 		writeJSON(w, 415, map[string]any{"error": "mp3_only", "message": "管理员只允许 MP3 第三方音源"})
@@ -527,6 +570,9 @@ func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) sourceChunk(w http.ResponseWriter, r *http.Request) {
+	if !a.admitHTTPLeaf(w, r) {
+		return
+	}
 	streamID, _ := strconv.ParseUint(r.URL.Query().Get("stream_id"), 10, 32)
 	seq, _ := strconv.ParseUint(r.URL.Query().Get("seq"), 10, 32)
 	frame, err := a.source.Chunk(uint32(streamID), uint32(seq))
