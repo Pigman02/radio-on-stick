@@ -190,17 +190,26 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		TrackID  string `json:"track_id"`
-		Nickname string `json:"nickname"`
+		TrackID     string `json:"track_id"`
+		CandidateID string `json:"candidate_id"`
+		Nickname    string `json:"nickname"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]any{"error": "bad_json"})
 		return
 	}
+	trackID := strings.TrimSpace(body.TrackID)
+	if trackID == "" {
+		trackID = strings.TrimSpace(body.CandidateID)
+	}
+	if trackID == "" {
+		writeJSON(w, 400, map[string]any{"error": "missing_track_id"})
+		return
+	}
 	var track library.Track
-	if source, sourceID, found := strings.Cut(body.TrackID, ":"); found {
+	if source, sourceID, found := strings.Cut(trackID, ":"); found {
 		a.pluginMu.Lock()
-		item, cached := a.pluginCache[body.TrackID]
+		item, cached := a.pluginCache[trackID]
 		a.pluginMu.Unlock()
 		resolved := item
 		if !cached || resolved.AudioURL == "" {
@@ -229,13 +238,13 @@ func (a *api) request(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		track = library.Track{
-			ID: body.TrackID, Title: resolved.Title, Artist: resolved.Artist,
+			ID: trackID, Title: resolved.Title, Artist: resolved.Artist,
 			Album: resolved.Album, DurationMS: resolved.DurationMS,
 			URL: resolved.AudioURL, Source: resolved.Source, SourceID: resolved.SourceID,
 			CoverURL: resolved.CoverURL,
 		}
 	} else {
-		local, ok := a.index.Get(body.TrackID)
+		local, ok := a.index.Get(trackID)
 		if !ok {
 			writeJSON(w, 404, map[string]any{"error": "not_found"})
 			return
