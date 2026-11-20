@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -135,11 +136,9 @@ func (a *api) stateJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) config(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{
-		"station_name": "Go Radio Station", "subtitle": "local library",
-		"page_title": "Go Radio Station", "notice": "",
-		"background_interval_sec": 300, "backgrounds": []any{},
-	})
+	settings := a.state.Settings()
+	settings["backgrounds"] = []any{}
+	writeJSON(w, 200, settings)
 }
 
 func (a *api) request(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +353,16 @@ func (a *api) messages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) voteSkip(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"ok": true, "now": a.state.Snapshot(), "switched": false})
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	voted, switched := a.state.Vote(host)
+	now := a.state.Snapshot()
+	if vote, ok := now["vote"].(map[string]any); ok {
+		vote["voted"] = voted
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "now": now, "switched": switched})
 }
 
 func (a *api) report(w http.ResponseWriter, r *http.Request) {
@@ -374,19 +382,47 @@ func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{
 		"now": state["now"], "upcoming": state["upcoming"], "queue": state["queue"],
 		"messages": state["messages"], "history": state["history"],
-		"policy": map[string]any{
-			"max_listeners": 0, "request_open": true, "upload_open": true,
-			"message_open": true,
-		},
-		"settings": map[string]any{
-			"station_name": "Go Radio Station", "subtitle": "local library",
-			"notice": "", "page_title": "Go Radio Station",
-			"background_interval_sec": 300,
-		},
+		"policy": a.state.Policy(), "settings": a.state.Settings(),
 		"tracks": a.index.List(200), "backgrounds": []any{},
 		"directory": map[string]any{"enabled": false},
 	}
 	writeJSON(w, 200, result)
+}
+
+func (a *api) adminSettings(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, 200, map[string]any{"ok": true, "settings": a.state.Settings()})
+		return
+	}
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	a.state.UpdateSettings(body)
+	writeJSON(w, 200, map[string]any{"ok": true, "settings": a.state.Settings()})
+}
+
+func (a *api) adminPolicy(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, 200, map[string]any{"ok": true, "policy": a.state.Policy()})
+		return
+	}
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	a.state.UpdatePolicy(body)
+	writeJSON(w, 200, map[string]any{"ok": true, "policy": a.state.Policy()})
 }
 
 func (a *api) adminDeleteMessage(w http.ResponseWriter, r *http.Request) {
@@ -460,6 +496,8 @@ func main() {
 	mux.HandleFunc("/api/report", a.report)
 	mux.HandleFunc("/api/lyrics/", a.lyrics)
 	mux.HandleFunc("/api/admin/state", a.adminState)
+	mux.HandleFunc("/api/admin/settings", a.adminSettings)
+	mux.HandleFunc("/api/admin/policy", a.adminPolicy)
 	mux.HandleFunc("/api/admin/messages/delete", a.adminDeleteMessage)
 	mux.HandleFunc("/api/admin/skip", a.skip)
 	mux.HandleFunc("/api/admin/pause", a.pause)

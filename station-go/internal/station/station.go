@@ -52,10 +52,23 @@ type State struct {
 	requests []QueueEntry
 	nextID   int
 	queueID  int64
+	votes    map[string]bool
+	settings map[string]any
+	policy   map[string]any
 }
 
 func New(index *library.Index, name string) *State {
-	return &State{index: index, name: name}
+	return &State{
+		index: index, name: name, votes: map[string]bool{},
+		settings: map[string]any{
+			"station_name": name, "subtitle": "local library", "notice": "",
+			"page_title": name, "background_interval_sec": 300,
+		},
+		policy: map[string]any{
+			"max_listeners": 0, "request_open": true, "upload_open": true,
+			"message_open": true,
+		},
+	}
 }
 
 func (s *State) Rebuild() {
@@ -117,6 +130,7 @@ func (s *State) Pause(paused bool) {
 func (s *State) Skip() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.votes = map[string]bool{}
 	s.current = library.Track{}
 	s.started = time.Time{}
 	s.advanceLocked()
@@ -200,7 +214,7 @@ func (s *State) SnapshotLocked() map[string]any {
 		"started_at_ms": startedMS, "position_ms": position,
 		"duration_ms": s.current.DurationMS, "paused": s.paused,
 		"track": entry(s.current), "next": next, "listeners": 1,
-		"vote": map[string]any{"votes": 0, "needed": 3, "voted": false},
+		"vote": map[string]any{"votes": len(s.votes), "needed": 3, "voted": false},
 	}
 }
 
@@ -281,6 +295,70 @@ func (s *State) Pin(queueID int64) bool {
 		}
 	}
 	return false
+}
+
+func (s *State) Vote(client string) (bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.current.ID == "" || s.votes[client] {
+		return false, false
+	}
+	s.votes[client] = true
+	if len(s.votes) >= 3 {
+		s.votes = map[string]bool{}
+		s.current = library.Track{}
+		s.started = time.Time{}
+		s.advanceLocked()
+		return true, true
+	}
+	return true, false
+}
+
+func (s *State) VoteSnapshot(client string) map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return map[string]any{"votes": len(s.votes), "needed": 3, "voted": s.votes[client]}
+}
+
+func (s *State) Settings() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := map[string]any{}
+	for key, value := range s.settings {
+		result[key] = value
+	}
+	return result
+}
+
+func (s *State) UpdateSettings(values map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, key := range []string{"station_name", "subtitle", "notice", "page_title"} {
+		if value, ok := values[key]; ok {
+			s.settings[key] = value
+			if key == "station_name" {
+				s.name = fmt.Sprint(value)
+			}
+		}
+	}
+}
+
+func (s *State) Policy() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := map[string]any{}
+	for key, value := range s.policy {
+		result[key] = value
+	}
+	return result
+}
+
+func (s *State) UpdatePolicy(values map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, value := range values {
+		s.policy[key] = value
+	}
 }
 
 func (s *State) Name() string { return s.name }
