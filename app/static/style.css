@@ -5650,3 +5650,88 @@ html[data-theme="light"] .player-dock .volume-toggle.muted {
     pointer-events: none;
   }
 }
+
+/* ---------- Vertical volume flyout: rotated native range ---------- */
+/* Rotating a horizontal range keeps the native thumb circular. The previous
+   writing-mode approach produced a distorted/crooked thumb in some engines. */
+.volume-flyout {
+  display: contents;
+}
+
+@media (orientation: portrait) {
+  .volume-flyout {
+    display: none;
+    position: absolute;
+    z-index: 89;
+    left: 50%;
+    bottom: calc(100% + 10px);
+    width: 34px;
+    height: 112px;
+    transform: translateX(-50%);
+    border-radius: 18px;
+    background: rgba(13, 20, 33, 0.96);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
+  }
+
+  .dock-volume.volume-open .volume-flyout {
+    display: block;
+  }
+
+  /* Discard the earlier pseudo flyout. */
+  .dock-volume.volume-open::before,
+  .dock-volume.volume-open::after {
+    content: none !important;
+  }
+
+  .volume-flyout::after {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    left: 50%;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.62);
+    pointer-events: none;
+  }
+
+  .dock-volume.volume-open .volume-flyout input[type="range"] {
+    display: block;
+    position: absolute;
+    z-index: 1;
+    left: 50%;
+    top: 50%;
+    width: 96px;
+    height: 34px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    transform: translate(-50%, -50%) rotate(-90deg);
+    transform-origin: center;
+    writing-mode: horizontal-tb;
+    direction: ltr;
+    background: transparent !important;
+  }
+}
+
+html[data-theme="light"] .volume-flyout {
+  background: rgba(250, 252, 255, 0.98);
+  box-shadow: 0 12px 34px rgba(26, 39, 61, 0.18);
+}
+
+html[data-theme="light"] .volume-flyout::after {
+  background: rgba(22, 35, 57, 0.30);
+}
+
+html[data-theme="light"] .volume-flyout input[type="range"]::-webkit-slider-thumb {
+  background: #bd6d1e;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(189, 109, 30, 0.16);
+}
+
+html[data-theme="light"] .volume-flyout input[type="range"]::-moz-range-thumb {
+  background: #bd6d1e;
+  border-color: #ffffff;
+}
