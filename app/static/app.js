@@ -1041,6 +1041,15 @@ window.addEventListener("radio:open-nickname", () => {
   openNicknameModal();
 });
 
+window.addEventListener("radio:admin-nickname", (event) => {
+  const value = String((event.detail && event.detail.nickname) || "").trim().slice(0, 16);
+  if (!value) return;
+  state.nickname = value;
+  storageSet("radio.nickname", value);
+  cookieSet("radio_nickname", value);
+  updateNicknameUI();
+});
+
 /* ---------- player ---------- */
 
 function updatePlayButton() {
@@ -3182,7 +3191,17 @@ window.addEventListener("resize", () => {
   }
 });
 
-nicknameBtn.addEventListener("click", openNicknameModal);
+nicknameBtn.addEventListener("click", async () => {
+  try {
+    if (window.RadioAdmin && typeof window.RadioAdmin.openFromProfile === "function") {
+      const opened = await window.RadioAdmin.openFromProfile();
+      if (opened) return;
+    }
+  } catch (_) {
+    /* fall through to the ordinary nickname dialog */
+  }
+  openNicknameModal();
+});
 bgPickerBtn.addEventListener("click", () => {
   if (state.localBackgrounds.length) openBgLocalModal();
   else bgLocalInput.click();
@@ -3316,7 +3335,7 @@ function loadAdminExtension() {
   style.id = "adminExtensionStyle";
   document.head.appendChild(style);
   const script = document.createElement("script");
-  script.src = "/admin.js?v=32";
+  script.src = "/admin.js?v=33";
   script.id = "adminExtensionScript";
   adminExtensionPromise = new Promise((resolve, reject) => {
     script.onload = resolve;

@@ -9,11 +9,12 @@
   const state = {
     token: "",
     data: null,
-    tab: "tracks",
+    tab: "control",
     busy: false,
     timer: null,
     dirty: false,
     owner: false,
+    dismissed: false,
   };
 
   const el = (tag, className = "", text = "") => {
@@ -134,11 +135,16 @@
     nickname.addEventListener("click", () => {
       window.dispatchEvent(new CustomEvent("radio:open-nickname"));
     });
+    // The dedicated nickname field lives above the panel body.
+    nickname.classList.add("hidden");
     headActions.appendChild(nickname);
     const exit = el("button", "ghost-btn", "退出管理员");
     exit.id = "adminExitBtn";
     exit.type = "button";
     exit.addEventListener("click", logout);
+    // Server owners do not get a logout affordance. The X button only closes
+    // the console; administrator authorization remains active.
+    exit.classList.add("hidden");
     headActions.appendChild(exit);
     const close = el("button", "icon-btn");
     close.type = "button";
@@ -174,6 +180,7 @@
     const tabs = el("nav", "admin-console-tabs");
     tabs.setAttribute("role", "tablist");
     const tabDefs = [
+      ["control", "待播放"],
       ["tracks", "曲目库"],
       ["library", "资料库"],
       ["policy", "准入与格式"],
@@ -192,6 +199,35 @@
     }
     panel.appendChild(tabs);
 
+    const profileBar = el("div", "admin-profile-bar");
+    const nickLabel = el("label", "admin-profile-field");
+    nickLabel.appendChild(el("span", "", "昵称"));
+    const nickInput = el("input", "admin-token-input");
+    nickInput.id = "adminNicknameInput";
+    nickInput.maxLength = 16;
+    nickInput.autocomplete = "nickname";
+    try { nickInput.value = localStorage.getItem("radio.nickname") || ""; } catch (_) { /* ignore */ }
+    nickLabel.appendChild(nickInput);
+    profileBar.appendChild(nickLabel);
+    const nickSave = el("button", "ghost-btn", "保存昵称");
+    nickSave.id = "adminNicknameSave";
+    nickSave.type = "button";
+    nickSave.addEventListener("click", () => {
+      const value = nickInput.value.trim().slice(0, 16);
+      if (!value) {
+        setStatus("offline", "昵称不能为空");
+        return;
+      }
+      try { localStorage.setItem("radio.nickname", value); } catch (_) { /* ignore */ }
+      try {
+        document.cookie = `radio_nickname=${encodeURIComponent(value)}; max-age=31536000; path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
+      } catch (_) { /* ignore */ }
+      window.dispatchEvent(new CustomEvent("radio:admin-nickname", { detail: { nickname: value } }));
+      setStatus("live", "昵称已保存");
+    });
+    profileBar.appendChild(nickSave);
+    panel.appendChild(profileBar);
+
     const body = el("div", "admin-console-body");
     body.id = "adminConsoleBody";
     panel.appendChild(body);
@@ -209,6 +245,7 @@
   }
 
   async function openConsole(showLogin = false) {
+    state.dismissed = false;
     buildConsole();
     const overlay = $("adminConsole");
     overlay.classList.remove("hidden");
@@ -238,6 +275,7 @@
   }
 
   async function openWithToken(token) {
+    state.dismissed = false;
     state.token = String(token || "").trim();
     state.owner = false;
     if (!state.token) return false;
@@ -261,6 +299,7 @@
   }
 
   async function openOwner() {
+    state.dismissed = false;
     state.token = "";
     state.owner = true;
     buildConsole();
@@ -295,6 +334,7 @@
   }
 
   function closeConsole() {
+    state.dismissed = true;
     $("adminConsole")?.classList.add("hidden");
     document.body.classList.remove("admin-console-open");
   }
@@ -419,6 +459,7 @@
     renderDirectory();
     renderAccess();
     renderMessages();
+    if (state.tab === "control") renderControl();
     for (const button of document.querySelectorAll(".admin-console-tab")) {
       button.classList.toggle("active", button.dataset.tab === state.tab);
     }
@@ -1001,9 +1042,21 @@
     }
   }
 
+  async function openFromProfile() {
+    state.dismissed = false;
+    if (state.token) {
+      if (await openWithToken(state.token)) return true;
+    }
+    if (await detectOwner()) {
+      return openOwner();
+    }
+    return false;
+  }
+
   window.RadioAdmin = {
     openWithToken,
     openOwner,
+    openFromProfile,
     logout,
     close: closeConsole,
     isOpen: () => Boolean($("adminConsole") && !$("adminConsole").classList.contains("hidden")),
@@ -1020,7 +1073,7 @@
     }
   });
   function ensureOwnerConsole() {
-    if (!IS_ADMIN_PAGE) return;
+    if (!IS_ADMIN_PAGE || state.dismissed) return;
     if ($("adminConsole") && !$("adminConsole").classList.contains("hidden")) return;
     detectOwner().then((owner) => {
       if (owner) {
