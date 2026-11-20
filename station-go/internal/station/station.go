@@ -276,8 +276,33 @@ func (s *State) State() map[string]any {
 	history := make([]History, len(s.history))
 	copy(history, s.history)
 	requests := make([]QueueEntry, 0, len(s.requests))
+	pendingByTrack := map[string]QueueEntry{}
 	for _, entry := range s.requests {
 		if entry.Status == "pending" {
+			pendingByTrack[entry.TrackID] = entry
+		}
+	}
+	// The visible playlist must match the "next" field. A station that is
+	// rotating local library tracks therefore lists those tracks too, instead
+	// of showing an empty playlist with a populated next track.
+	seen := map[string]bool{}
+	for _, track := range s.queue {
+		if track.ID == s.current.ID || seen[track.ID] {
+			continue
+		}
+		seen[track.ID] = true
+		if entry, ok := pendingByTrack[track.ID]; ok {
+			requests = append(requests, entry)
+			continue
+		}
+		requests = append(requests, QueueEntry{
+			TrackID: track.ID, Title: track.Title, Artist: track.Artist,
+			CoverURL: track.CoverURL, Status: "pending",
+		})
+	}
+	for _, entry := range s.requests {
+		if entry.Status == "pending" && !seen[entry.TrackID] {
+			seen[entry.TrackID] = true
 			requests = append(requests, entry)
 		}
 	}
