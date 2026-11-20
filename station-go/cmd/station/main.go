@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"radio-on-stick/station-go/internal/library"
+	"radio-on-stick/station-go/internal/mesh"
 	"radio-on-stick/station-go/internal/station"
 	"radio-on-stick/station-go/internal/stream"
 )
@@ -23,6 +24,7 @@ type api struct {
 	scanMu     sync.Mutex
 	state      *station.State
 	source     *stream.Hub
+	mesh       *mesh.Hub
 }
 
 func env(key, fallback string) string {
@@ -181,6 +183,10 @@ func (a *api) pause(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+func (a *api) meshStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.mesh.Status())
+}
+
 func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
 	track := a.state.Current()
 	manifest, err := a.source.Manifest(track)
@@ -251,6 +257,7 @@ func main() {
 		adminToken: os.Getenv("RADIO_GO_ADMIN_TOKEN"),
 		state:      state,
 		source:     stream.NewHub(),
+		mesh:       mesh.NewHub(),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
@@ -261,6 +268,8 @@ func main() {
 	mux.HandleFunc("/api/admin/skip", a.skip)
 	mux.HandleFunc("/api/admin/pause", a.pause)
 	mux.HandleFunc("/native/", a.native)
+	mux.HandleFunc("/ws", a.mesh.ServeHTTP)
+	mux.HandleFunc("/mesh.json", a.meshStatus)
 	mux.HandleFunc("/source/manifest", a.sourceManifest)
 	mux.HandleFunc("/source/chunk", a.sourceChunk)
 	mux.HandleFunc("/api/library/search", a.search)
