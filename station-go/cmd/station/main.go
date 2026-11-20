@@ -52,6 +52,7 @@ type api struct {
 	listenerNames map[string]string
 	mp3Mu         sync.Mutex
 	mp3Cache      map[string]bool
+	ownerIPs      map[string]bool
 }
 
 func env(key, fallback string) string {
@@ -146,6 +147,24 @@ func (a *api) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeContent(w, r, filepath.Base(track.Path), info.ModTime(), file)
+}
+
+func ownerSet(raw string) map[string]bool {
+	result := map[string]bool{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			result[item] = true
+		}
+	}
+	return result
+}
+
+func (a *api) ownerRequest(r *http.Request) bool {
+	if r.URL.Path != "/" {
+		return false
+	}
+	return a.ownerIPs[a.clientIP(r)]
 }
 
 func (a *api) clientIP(r *http.Request) string {
@@ -575,6 +594,10 @@ func (a *api) secure(next http.Handler) http.Handler {
 		"/api/join": true, "/admin": true, "/admin/": true,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.ownerRequest(r) {
+			http.Redirect(w, r, "/admin", http.StatusFound)
+			return
+		}
 		if !a.joinRequired || public[r.URL.Path] || strings.HasPrefix(r.URL.Path, "/api/admin/") || strings.HasPrefix(r.URL.Path, "/backgrounds/") || a.validJoin(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -692,6 +715,10 @@ func (a *api) adminDirectory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) root(w http.ResponseWriter, r *http.Request) {
+	if a.ownerRequest(r) {
+		http.Redirect(w, r, "/admin", http.StatusFound)
+		return
+	}
 	if r.URL.Path == "/admin" || r.URL.Path == "/admin/" {
 		http.ServeFile(w, r, filepath.Join(a.staticDir, "index.html"))
 		return
@@ -1064,6 +1091,7 @@ func main() {
 		listeners:   map[string]time.Time{},
 		listenerNames: map[string]string{},
 		mp3Cache:      map[string]bool{},
+		ownerIPs:      ownerSet(env("RADIO_OWNER_IPS", "127.0.0.1,::1")),
 	}
 	if raw, err := os.ReadFile(a.backgroundFile); err == nil {
 		_ = json.Unmarshal(raw, &a.backgroundURLs)
