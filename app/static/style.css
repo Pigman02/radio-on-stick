@@ -5774,3 +5774,15 @@ html[data-theme="light"] .volume-flyout input[type="range"]::-moz-range-thumb {
   position: relative;
   top: clamp(8px, 1.2vh, 12px);
 }
+
+/* Portrait full-lyrics layout: the title/artist/album column widens to nearly
+   the whole stage. Make the next-track row use the same width so it does not
+   stay as a narrower card in the middle of the page. */
+@media (orientation: portrait) {
+  .playback-page.lyrics-open .next-track-info {
+    width: calc(100% - 16px);
+    max-width: none;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
