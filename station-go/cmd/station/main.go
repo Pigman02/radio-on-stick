@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"fmt"
 	"io"
@@ -48,6 +49,7 @@ type api struct {
 	pluginCache   map[string]plugins.Candidate
 	listenerMu    sync.Mutex
 	listeners     map[string]time.Time
+	listenerNames map[string]string
 }
 
 func env(key, fallback string) string {
@@ -160,14 +162,31 @@ func (a *api) clientIP(r *http.Request) string {
 	return host
 }
 
-func (a *api) touchListener(r *http.Request) int {
+func (a *api) touchListener(w http.ResponseWriter, r *http.Request, nickname string) string {
 	now := time.Now()
-	client := a.clientIP(r)
+	key := ""
+	if cookie, err := r.Cookie("radio_lid"); err == nil && len(cookie.Value) >= 16 {
+		key = cookie.Value
+	}
+	if key == "" {
+		random := make([]byte, 16)
+		_, _ = rand.Read(random)
+		key = hex.EncodeToString(random)
+		http.SetCookie(w, &http.Cookie{
+			Name: "radio_lid", Value: key, Path: "/", HttpOnly: true,
+			SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 60 * 60,
+			Secure: r.Header.Get("X-Forwarded-Proto") == "https",
+		})
+	}
 	a.listenerMu.Lock()
-	a.listeners[client] = now
-	for key, seen := range a.listeners {
+	a.listeners[key] = now
+	if nickname != "" {
+		a.listenerNames[key] = nickname
+	}
+	for client, seen := range a.listeners {
 		if now.Sub(seen) > 35*time.Second {
-			delete(a.listeners, key)
+			delete(a.listeners, client)
+			delete(a.listenerNames, client)
 		}
 	}
 	count := len(a.listeners)
@@ -176,16 +195,39 @@ func (a *api) touchListener(r *http.Request) int {
 		count = 1
 	}
 	a.state.SetListeners(count)
-	return count
+	return key
+}
+
+func (a *api) listenersAPI(w http.ResponseWriter, r *http.Request) {
+	nickname := strings.TrimSpace(r.URL.Query().Get("nickname"))
+	a.touchListener(w, r, nickname)
+	now := time.Now()
+	a.listenerMu.Lock()
+	items := make([]map[string]any, 0, len(a.listeners))
+	for client, seen := range a.listeners {
+		if now.Sub(seen) > 35*time.Second {
+			delete(a.listeners, client)
+			delete(a.listenerNames, client)
+			continue
+		}
+		name := a.listenerNames[client]
+		if name == "" {
+			name = "听众"
+		}
+		items = append(items, map[string]any{"nickname": name, "last_seen": seen.UnixMilli()})
+	}
+	count := len(a.listeners)
+	a.listenerMu.Unlock()
+	writeJSON(w, 200, map[string]any{"ok": true, "listeners": count, "items": items})
 }
 
 func (a *api) now(w http.ResponseWriter, r *http.Request) {
-	a.touchListener(r)
+	a.touchListener(w, r, "")
 	writeJSON(w, 200, a.state.Snapshot())
 }
 
 func (a *api) stateJSON(w http.ResponseWriter, r *http.Request) {
-	a.touchListener(r)
+	a.touchListener(w, r, "")
 	writeJSON(w, 200, a.state.State())
 }
 
@@ -360,7 +402,47 @@ func (a *api) sourceChunk(w http.ResponseWriter, r *http.Request) {
 func (a *api) native(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/native/")
 	track, ok := a.index.Get(id)
-	if !ok || track.Path == "" {
+	if !ok {
+		// Remote/private tracks are not in the local index; use the active track.
+		track = a.state.Current()
+		if track.ID != id {
+			writeJSON(w, 404, map[string]any{"error": "not_found"})
+			return
+		}
+	}
+	if track.URL != "" {
+		cmd := exec.CommandContext(r.Context(), "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-i", track.URL, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			http.Error(w, "audio unavailable", http.StatusBadGateway)
+			return
+		}
+		cmd.Stderr = io.Discard
+		if err := cmd.Start(); err != nil {
+			http.Error(w, "audio unavailable", http.StatusBadGateway)
+			return
+		}
+		defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		buffer := make([]byte, 32*1024)
+		for {
+			n, err := stdout.Read(buffer)
+			if n > 0 {
+				if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
+					return
+				}
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+	if track.Path == "" {
 		writeJSON(w, 404, map[string]any{"error": "not_found"})
 		return
 	}
@@ -644,8 +726,7 @@ func (a *api) messages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) voteSkip(w http.ResponseWriter, r *http.Request) {
-	a.touchListener(r)
-	host := a.clientIP(r)
+	host := a.touchListener(w, r, r.URL.Query().Get("nickname"))
 	voted, switched := a.state.Vote(host)
 	now := a.state.Snapshot()
 	if vote, ok := now["vote"].(map[string]any); ok {
@@ -910,6 +991,7 @@ func main() {
 		backgroundFile: env("RADIO_GO_BACKGROUND_URLS", "data/station-go-backgrounds.json"),
 		pluginCache: map[string]plugins.Candidate{},
 		listeners:   map[string]time.Time{},
+		listenerNames: map[string]string{},
 	}
 	if raw, err := os.ReadFile(a.backgroundFile); err == nil {
 		_ = json.Unmarshal(raw, &a.backgroundURLs)
@@ -917,6 +999,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
 	mux.HandleFunc("/now.json", a.now)
+	mux.HandleFunc("/api/listeners", a.listenersAPI)
 	mux.HandleFunc("/api/state", a.stateJSON)
 	mux.HandleFunc("/api/config", a.config)
 	mux.HandleFunc("/api/join", a.joinAPI)

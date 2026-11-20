@@ -158,7 +158,8 @@ func (s *State) Request(track library.Track, nickname string) {
 	s.nextID++
 	s.history = append([]History{{
 		ID: fmt.Sprintf("h%d", s.nextID), TrackID: track.ID, Title: track.Title,
-		Artist: track.Artist, Nickname: nickname, CreatedAt: time.Now().UnixMilli(),
+		Artist: track.Artist, CoverURL: track.CoverURL, Nickname: nickname,
+		CreatedAt: time.Now().UnixMilli(),
 	}}, s.history...)
 	if len(s.history) > 200 {
 		s.history = s.history[:200]
@@ -172,7 +173,7 @@ func (s *State) Request(track library.Track, nickname string) {
 	s.queueID++
 	s.requests = append(s.requests, QueueEntry{
 		QueueID: s.queueID, TrackID: track.ID, Title: track.Title,
-		Artist: track.Artist, Nickname: nickname, Status: "pending",
+		Artist: track.Artist, CoverURL: track.CoverURL, Nickname: nickname, Status: "pending",
 		CreatedAt: time.Now().UnixMilli(),
 	})
 	s.advanceLocked()
@@ -215,9 +216,6 @@ func (s *State) SnapshotLocked() map[string]any {
 			source = "local"
 		}
 		direct := "/native/" + track.ID
-		if track.URL != "" {
-			direct = ""
-		}
 		return map[string]any{
 			"id": track.ID, "source": source, "title": track.Title,
 			"artist": track.Artist, "album": track.Album,
@@ -449,8 +447,8 @@ func (s *State) SetListeners(count int) {
 
 func (s *State) voteNeededLocked() int {
 	needed := s.listeners/2 + 1
-	if needed < 2 {
-		needed = 2
+	if needed < 1 {
+		needed = 1
 	}
 	return needed
 }
