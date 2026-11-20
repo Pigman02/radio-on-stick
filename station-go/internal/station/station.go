@@ -245,17 +245,28 @@ func (s *State) Skip() {
 func (s *State) Request(track library.Track, nickname, clientKey string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.current.ID == track.ID {
-		return
-	}
 	s.nextID++
-	s.history = append([]History{{
+	// History is unique by track: requesting the same song again refreshes its
+	// timestamp and moves it to the top instead of creating a duplicate row.
+	entry := History{
 		ID: fmt.Sprintf("h%d", s.nextID), TrackID: track.ID, Title: track.Title,
 		Artist: track.Artist, CoverURL: track.CoverURL, Nickname: nickname,
 		CreatedAt: time.Now().UnixMilli(),
-	}}, s.history...)
-	if len(s.history) > 200 {
-		s.history = s.history[:200]
+	}
+	history := make([]History, 0, len(s.history)+1)
+	history = append(history, entry)
+	for _, old := range s.history {
+		if old.TrackID != track.ID {
+			history = append(history, old)
+		}
+	}
+	if len(history) > 200 {
+		history = history[:200]
+	}
+	s.history = history
+	if s.current.ID == track.ID {
+		s.saveLocked()
+		return
 	}
 	for _, entry := range s.requests {
 		if entry.TrackID == track.ID && entry.Status == "pending" {
@@ -365,8 +376,28 @@ func (s *State) SnapshotLocked() map[string]any {
 		}
 	}
 	next := map[string]any(nil)
-	if len(s.queue) > 0 {
-		next = entry(s.queue[0])
+	// Only requested songs belong to the visible "next"/playlist. The internal
+	// library rotation is not a user request and must not appear as a song
+	// nobody ordered.
+	for _, request := range s.requests {
+		if request.Status != "pending" {
+			continue
+		}
+		for _, track := range s.queue {
+			if track.ID == request.TrackID {
+				next = entry(track)
+				break
+			}
+		}
+		if next == nil {
+			next = map[string]any{
+				"id": request.TrackID, "title": request.Title,
+				"artist": request.Artist, "cover_url": request.CoverURL,
+				"lyrics_url": "/api/lyrics/" + request.TrackID,
+				"audio": map[string]any{"direct": "/native/" + request.TrackID},
+			}
+		}
+		break
 	}
 	direct := ""
 	lyricsURL := ""
@@ -394,37 +425,12 @@ func (s *State) State(clientKey string) map[string]any {
 	history := make([]History, len(s.history))
 	copy(history, s.history)
 	requests := make([]QueueEntry, 0, len(s.requests))
-	pendingByTrack := map[string]QueueEntry{}
 	for _, entry := range s.requests {
-		if entry.Status == "pending" {
-			pendingByTrack[entry.TrackID] = entry
-		}
-	}
-	// The visible playlist must match the "next" field. A station that is
-	// rotating local library tracks therefore lists those tracks too, instead
-	// of showing an empty playlist with a populated next track.
-	seen := map[string]bool{}
-	for _, track := range s.queue {
-		if track.ID == s.current.ID || seen[track.ID] {
+		if entry.Status != "pending" {
 			continue
 		}
-		seen[track.ID] = true
-		if entry, ok := pendingByTrack[track.ID]; ok {
-			entry.CanCancel = entry.ClientKey != "" && entry.ClientKey == clientKey
-			requests = append(requests, entry)
-			continue
-		}
-		requests = append(requests, QueueEntry{
-			TrackID: track.ID, Title: track.Title, Artist: track.Artist,
-			CoverURL: track.CoverURL, Status: "pending",
-		})
-	}
-	for _, entry := range s.requests {
-		if entry.Status == "pending" && !seen[entry.TrackID] {
-			seen[entry.TrackID] = true
-			entry.CanCancel = entry.ClientKey != "" && entry.ClientKey == clientKey
-			requests = append(requests, entry)
-		}
+		entry.CanCancel = entry.ClientKey != "" && entry.ClientKey == clientKey
+		requests = append(requests, entry)
 	}
 	return map[string]any{
 		"now": s.SnapshotLocked(), "upcoming": requests, "queue": requests,
@@ -595,6 +601,22 @@ func (s *State) DeleteMessage(id string) bool {
 	return false
 }
 
+func dedupeHistory(items []History) []History {
+	seen := map[string]bool{}
+	result := make([]History, 0, len(items))
+	for _, item := range items {
+		if item.TrackID == "" || seen[item.TrackID] {
+			continue
+		}
+		seen[item.TrackID] = true
+		result = append(result, item)
+	}
+	if len(result) > 200 {
+		result = result[:200]
+	}
+	return result
+}
+
 func (s *State) SetPersistPath(path string) {
 	s.mu.Lock()
 	s.persistPath = path
@@ -625,7 +647,7 @@ func (s *State) SetPersistPath(path string) {
 				s.policy[key] = value
 			}
 			if payload.History != nil {
-				s.history = payload.History
+				s.history = dedupeHistory(payload.History)
 			}
 			if payload.Messages != nil {
 				s.messages = payload.Messages
