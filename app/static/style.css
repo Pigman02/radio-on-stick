@@ -5751,3 +5751,6 @@ html[data-theme="light"] .volume-flyout input[type="range"]::-moz-range-thumb {
   padding-top: 0 !important;
   padding-bottom: 0 !important;
 }
+.lyrics-panel .lyrics-scroll {
+  overscroll-behavior: contain;
+}

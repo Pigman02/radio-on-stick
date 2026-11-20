@@ -1943,6 +1943,7 @@ function renderLyrics(lrc, translation) {
   }
   lyricsEl.textContent = "";
   lyricsEl.appendChild(fragment);
+  normalizeLyricsLayout();
   lyricsEl.classList.toggle("hide-translation", !state.showTranslation);
   currentLyricText.textContent = "";
   currentLyricTrans.textContent = "";
@@ -1962,6 +1963,16 @@ async function loadLyrics(url, trackId) {
   } catch (error) {
     if (state.lyricsTrackId === trackId) setLyricsEmpty("歌词暂不可用");
   }
+}
+
+function normalizeLyricsLayout() {
+  // Keep a small, content-bounded scroll range even if an older cached
+  // stylesheet still carries the former 45%/32% vertical padding.
+  if (!lyricsEl || !lyricsScroll) return;
+  lyricsEl.style.setProperty("padding-top", "0", "important");
+  lyricsEl.style.setProperty("padding-bottom", "0", "important");
+  lyricsScroll.style.setProperty("padding-top", "20px", "important");
+  lyricsScroll.style.setProperty("padding-bottom", "20px", "important");
 }
 
 function updateLyrics(positionMs) {
@@ -2226,6 +2237,7 @@ function setLyricsOpen(open) {
     state.lyricsOpen ? "收起完整歌词" : "展开歌词",
   );
   if (state.lyricsOpen) {
+    normalizeLyricsLayout();
     state.lyricsManualAt = 0;
     clearTimeout(state.lyricsManualTimer);
     requestAnimationFrame(() => {
@@ -3161,6 +3173,7 @@ stage.addEventListener("touchstart", onTouchStart, { passive: true });
 stage.addEventListener("touchmove", onTouchMove, { passive: false });
 stage.addEventListener("touchend", onTouchEnd, { passive: true });
 window.addEventListener("resize", () => {
+  normalizeLyricsLayout();
   if (window.matchMedia("(orientation: landscape)").matches && state.lyricsOpen) {
     setLyricsOpen(false);
   }
