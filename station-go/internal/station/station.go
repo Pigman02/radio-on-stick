@@ -79,11 +79,39 @@ func New(index *library.Index, name string) *State {
 func (s *State) Rebuild() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.queue = append([]library.Track(nil), s.index.List(50000)...)
-	s.current = library.Track{}
-	s.started = time.Time{}
-	s.seq = 0
-	s.advanceLocked()
+	tracks := s.index.List(50000)
+	valid := make(map[string]bool, len(tracks))
+	queue := make([]library.Track, 0, len(tracks))
+	for _, track := range tracks {
+		valid[track.ID] = true
+		if track.ID == s.current.ID {
+			continue
+		}
+		queue = append(queue, track)
+	}
+	// Keep pending requests only if their track still exists.
+	kept := s.requests[:0]
+	for _, entry := range s.requests {
+		if valid[entry.TrackID] {
+			kept = append(kept, entry)
+		}
+	}
+	s.requests = kept
+	s.queue = queue
+	if s.current.ID == "" {
+		s.advanceLocked()
+		return
+	}
+	if !valid[s.current.ID] {
+		// The current track itself was deleted. Only in this case is a new
+		// playback epoch required; deleting any other track must not restart
+		// the audio that is already playing.
+		s.current = library.Track{}
+		s.started = time.Time{}
+		s.seq++
+		s.audioRev++
+		s.advanceLocked()
+	}
 }
 
 func (s *State) advanceLocked() {
