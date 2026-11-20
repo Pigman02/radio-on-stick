@@ -35,6 +35,7 @@ type api struct {
 	state      *station.State
 	source     *stream.Hub
 	mesh       *mesh.Hub
+	meshSTUN   string
 	staticDir  string
 	uploadsDir string
 	directory  *directory.Client
@@ -334,11 +335,17 @@ func (a *api) listenersAPI(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) now(w http.ResponseWriter, r *http.Request) {
 	a.touchListener(w, r, "")
-	writeJSON(w, 200, a.state.Snapshot())
+	snapshot := a.state.Snapshot()
+	snapshot["mesh"] = map[string]any{"enabled": true, "ws_url": "/ws", "stun": a.meshSTUN}
+	writeJSON(w, 200, snapshot)
 }
 
 func (a *api) stateJSON(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, a.state.State(a.touchListener(w, r, "")))
+	state := a.state.State(a.touchListener(w, r, ""))
+	if now, ok := state["now"].(map[string]any); ok {
+		now["mesh"] = map[string]any{"enabled": true, "ws_url": "/ws", "stun": a.meshSTUN}
+	}
+	writeJSON(w, 200, state)
 }
 
 func (a *api) saveBackgroundURLsLocked() {
@@ -1433,6 +1440,7 @@ func main() {
 		state:      state,
 		source:     stream.NewHub(),
 		mesh:       mesh.NewHub(),
+		meshSTUN:   os.Getenv("RADIO_MESH_STUN"),
 		staticDir:  env("RADIO_STATIC_DIR", "app/static"),
 		uploadsDir: env("RADIO_GO_UPLOADS", "data/uploads"),
 		directory: directoryClient,
