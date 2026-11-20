@@ -573,13 +573,16 @@
     wrap.appendChild(status);
     wrap.appendChild(button("保存并扫描", "primary-btn", async () => {
       const values = textarea.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
-      status.textContent = "正在扫描…";
+      status.textContent = "正在扫描，资料库较大时可能需要几分钟…";
       status.dataset.tone = "busy";
       try {
         const data = await api("/api/admin/library", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dirs: values }),
+          // A macOS Music library can take far longer than the normal admin
+          // request timeout to walk and index.
+          timeout: 900_000,
         });
         status.textContent = `已索引 ${data.tracks} 首`;
         status.dataset.tone = "ok";
@@ -590,9 +593,12 @@
       }
     }));
     wrap.appendChild(button("仅重新扫描", "ghost-btn", async () => {
-      status.textContent = "正在重新扫描…";
+      status.textContent = "正在重新扫描，资料库较大时可能需要几分钟…";
       try {
-        const data = await api("/api/admin/library/scan", { method: "POST" });
+        const data = await api("/api/admin/library/scan", {
+        method: "POST",
+        timeout: 900_000,
+      });
         status.textContent = `已索引 ${data.tracks} 首`;
         status.dataset.tone = "ok";
         await loadState(true);
