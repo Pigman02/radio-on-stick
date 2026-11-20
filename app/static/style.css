@@ -5187,3 +5187,72 @@ html[data-theme="light"] .lyrics-panel .lyrics-scroll {
 html[data-theme="light"] .admin-console-backdrop {
   background: rgba(232, 239, 247, 0.60);
 }
+
+/* ---------- Keep the next-track row visible across pages and heights ---------- */
+/* The row is a flex child inside the cover column. Without this it can be
+   squeezed to 0px in short landscape windows even though it has content. */
+.next-track-info {
+  flex: 0 0 auto;
+}
+
+/* The full-lyrics layout still needs the upcoming track, not just the lyric. */
+.playback-page.lyrics-open .next-track-info {
+  display: flex;
+}
+
+/* Short portrait phones: shrink the cover rather than clipping the lyric and
+   next-track rows behind the dock. */
+@media (orientation: portrait) and (max-height: 700px) {
+  .cover-button {
+    width: min(70vw, 32vh, 400px);
+  }
+
+  .next-track-info {
+    margin-top: 10px;
+  }
+}
+
+/* Very short landscape windows cannot fit cover + title + next row. Keep the
+   title and next-track row, and drop the decorative cover. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .cover-button {
+    display: none !important;
+  }
+
+  .cover-column {
+    justify-content: flex-start;
+  }
+
+  .track-meta {
+    margin-top: 0;
+  }
+
+  .next-track-info {
+    display: flex !important;
+    margin-top: 6px;
+  }
+}
+
+/* ---------- Chat composer alignment ---------- */
+.chat-page .message-form.live {
+  align-items: center;
+}
+
+.chat-page .message-form.live input {
+  height: 40px;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+.chat-page .message-form.live .send-btn {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  align-self: center;
+}
+/* The send control is positioned against the composer's 10px top padding,
+   not the padding box centre. This aligns it exactly with the 40px input. */
+.chat-page .message-form.live .send-btn {
+  top: 10px;
+  transform: none;
+}
