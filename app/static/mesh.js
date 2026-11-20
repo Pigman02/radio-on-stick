@@ -1390,13 +1390,15 @@
       ) {
         lastResyncAt = Date.now();
         if (sourceRole()) {
-          restartSource();
-        } else {
-          const mime = currentStream ? currentStream.mime : "audio/mpeg";
-          accepted = freshAccepted();
-          currentStream = null;
-          if (!setupMedia(mime)) failMesh("mse");
+          // The source node is already at the live producer edge. Rebuilding
+          // its MSE here causes the audible 0 -> live reset loop; let the
+          // source pump fill the buffer instead.
+          return;
         }
+        const mime = currentStream ? currentStream.mime : "audio/mpeg";
+        accepted = freshAccepted();
+        currentStream = null;
+        if (!setupMedia(mime)) failMesh("mse");
         return;
       }
       const max = Math.max(0, end - 0.25);
