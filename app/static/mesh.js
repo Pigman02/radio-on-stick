@@ -23,11 +23,11 @@
   };
   const FNV_OFFSET = 0x811c9dc5;
   const FNV_PRIME = 0x01000193;
-  const LEAD_MS = 1600;
+  const LEAD_MS = 3200;
   const SYNC_TOLERANCE_MS = 700;
   const CATCHUP_MS = 10000;
   const CATCHUP_COOLDOWN_MS = 6000;
-  const SOURCE_BUFFER_MS = 3200;
+  const SOURCE_BUFFER_MS = 5200;
   const MAX_QUEUE_FRAMES = 120;
   const BUFFER_HIGH = 1024 * 1024;
   const BUFFER_LOW = 256 * 1024;
