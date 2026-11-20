@@ -1126,10 +1126,34 @@ func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	if len(items) > limit {
-		items = items[:limit]
+	// The private helper returns NetEase, QQ and Bilibili in source order.
+	// Truncating that flat list hid Bilibili whenever the default result limit
+	// was smaller than the NetEase+QQ prefix. Round-robin the sources so every
+	// enabled source gets representation in the visible result window.
+	groups := map[string][]map[string]any{}
+	for _, item := range items {
+		source := fmt.Sprint(item["source"])
+		groups[source] = append(groups[source], item)
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "candidates": items, "results": items})
+	order := []string{"local", "bilibili", "netease", "qq"}
+	seenOrder := map[string]bool{}
+	for _, source := range order { seenOrder[source] = true }
+	for source := range groups {
+		if !seenOrder[source] { order = append(order, source) }
+	}
+	mixed := make([]map[string]any, 0, limit)
+	for round := 0; len(mixed) < limit; round++ {
+		added := false
+		for _, source := range order {
+			group := groups[source]
+			if round >= len(group) { continue }
+			mixed = append(mixed, group[round])
+			added = true
+			if len(mixed) >= limit { break }
+		}
+		if !added { break }
+	}
+	writeJSON(w, 200, map[string]any{"items": mixed, "candidates": mixed, "results": mixed})
 }
 
 func main() {

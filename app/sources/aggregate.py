@@ -72,7 +72,7 @@ class TrackAggregator:
         self.qq = qq
         self.meting = meting
         self.bilibili = BilibiliSource(config)
-        self.search_sources = [netease, qq]
+        self.search_sources = [netease, qq, self.bilibili]
         self._candidate_lock = threading.Lock()
         self._candidates: dict[str, tuple[float, dict[str, Any]]] = {}
         self._executor = ThreadPoolExecutor(
