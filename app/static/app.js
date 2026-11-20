@@ -1457,12 +1457,14 @@ function wireAudioElement(element) {
   });
   element.addEventListener("waiting", () => {
     if (element !== audio || !state.userWantsPlay) return;
+    if (mesh && mesh.isActive()) mesh.noteStall();
     state.audioState = "buffering";
     refreshStatus();
     startStalledTimer();
   });
   element.addEventListener("stalled", () => {
     if (element !== audio || !state.userWantsPlay) return;
+    if (mesh && mesh.isActive()) mesh.noteStall();
     state.audioState = "buffering";
     refreshStatus();
     startStalledTimer();

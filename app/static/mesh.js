@@ -94,6 +94,7 @@
   let sourceStartFailures = 0;
   let lastCatchupAt = 0;
   let lastResyncAt = 0;
+  let stallTimes = [];
   let sourceToken = 0;
 
   const upstreams = new Map();
@@ -1169,6 +1170,19 @@
     reconnectDelay = Math.min(6000, reconnectDelay + 600);
   }
 
+  function noteStall() {
+    if (!active || !wanted || userPaused || !media || !media.started) return;
+    const now = Date.now();
+    stallTimes = stallTimes.filter((stamp) => now - stamp < 60_000);
+    stallTimes.push(now);
+    if (stallTimes.length >= 4) {
+      // Edge/Chromium can append MP3 MSE frames but still underrun under
+      // audio-output timing pressure. Once this repeats, HTTP native playback
+      // is smoother than repeatedly stuttering the P2P media path.
+      failMesh("mse-unstable");
+    }
+  }
+
   function failMesh(reason) {
     if (!active) return;
     active = false;
@@ -1468,6 +1482,7 @@
     update,
     setWanted,
     setPaused,
+    noteStall,
     matches,
     positionMs,
     seekLive,

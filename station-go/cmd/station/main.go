@@ -520,7 +520,14 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 			a.proxyRemoteAudio(w, r, track.URL)
 			return
 		}
-		cmd := exec.CommandContext(r.Context(), "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-i", track.URL, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
+		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-re"}
+		if a.state.Current().ID == track.ID {
+			if position := a.state.PositionMS(); position > 0 {
+				args = append(args, "-ss", fmt.Sprintf("%.3f", float64(position)/1000))
+			}
+		}
+		args = append(args, "-i", track.URL, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
+		cmd := exec.CommandContext(r.Context(), "ffmpeg", args...)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			http.Error(w, "audio unavailable", http.StatusBadGateway)
@@ -1189,8 +1196,8 @@ func main() {
 		}
 	}
 	state := station.New(index, env("RADIO_STATION_NAME", "Go Radio Station"))
-	state.SetPersistPath(env("RADIO_GO_STATE", "data/station-go-state.json"))
 	state.Rebuild()
+	state.SetPersistPath(env("RADIO_GO_STATE", "data/station-go-state.json"))
 	directoryClient := directory.New(
 		env("RADIO_GO_IDENTITY", "data/station-go-identity.json"),
 		env("RADIO_DIRECTORY_PUBLIC_URL", ""),

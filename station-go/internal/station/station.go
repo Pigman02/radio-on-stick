@@ -137,6 +137,7 @@ func (s *State) advanceLocked() {
 			s.requests[index].Status = "played"
 		}
 	}
+	s.saveLocked()
 }
 
 func (s *State) tickLocked(now time.Time) {
@@ -177,6 +178,7 @@ func (s *State) Pause(paused bool) {
 			s.pausedPosition = position
 		}
 		s.paused = true
+		s.saveLocked()
 		return
 	}
 	if !s.paused {
@@ -189,6 +191,8 @@ func (s *State) Pause(paused bool) {
 	}
 	if s.current.ID == "" {
 		s.advanceLocked()
+	} else {
+		s.saveLocked()
 	}
 }
 
@@ -230,7 +234,7 @@ func (s *State) Request(track library.Track, nickname string) {
 		CreatedAt: time.Now().UnixMilli(),
 	})
 	s.advanceLocked()
-
+	s.saveLocked()
 }
 
 func (s *State) PositionMS() int64 {
@@ -385,6 +389,7 @@ func (s *State) AddMessage(nickname, body string) Message {
 	if len(s.messages) > 200 {
 		s.messages = s.messages[len(s.messages)-200:]
 	}
+	s.saveLocked()
 	return message
 }
 
@@ -418,6 +423,7 @@ func (s *State) Cancel(queueID int64) bool {
 	for index, entry := range s.requests {
 		if entry.QueueID == queueID {
 			s.requests = append(s.requests[:index], s.requests[index+1:]...)
+			s.saveLocked()
 			return true
 		}
 	}
@@ -431,6 +437,7 @@ func (s *State) Pin(queueID int64) bool {
 		if entry.QueueID == queueID {
 			entry.PinCount++
 			s.requests = append([]QueueEntry{entry}, append(s.requests[:index], s.requests[index+1:]...)...)
+			s.saveLocked()
 			return true
 		}
 	}
@@ -507,6 +514,7 @@ func (s *State) ClearQueue() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = nil
+	s.saveLocked()
 }
 
 func (s *State) DeleteMessage(id string) bool {
@@ -515,6 +523,7 @@ func (s *State) DeleteMessage(id string) bool {
 	for index, message := range s.messages {
 		if message.ID == id {
 			s.messages = append(s.messages[:index], s.messages[index+1:]...)
+			s.saveLocked()
 			return true
 		}
 	}
@@ -527,8 +536,18 @@ func (s *State) SetPersistPath(path string) {
 	raw, err := os.ReadFile(path)
 	if err == nil {
 		var payload struct {
-			Settings map[string]any `json:"settings"`
-			Policy   map[string]any `json:"policy"`
+			Settings map[string]any  `json:"settings"`
+			Policy   map[string]any  `json:"policy"`
+			History  []History       `json:"history"`
+			Messages []Message       `json:"messages"`
+			Requests       []QueueEntry    `json:"requests"`
+			Current        library.Track   `json:"current"`
+			Queue          []library.Track `json:"queue"`
+			StartedAtMS    int64           `json:"started_at_ms"`
+			Paused         bool            `json:"paused"`
+			PausedPosition int64           `json:"paused_position_ms"`
+			Seq            int             `json:"seq"`
+			AudioRev       int             `json:"audio_rev"`
 		}
 		if json.Unmarshal(raw, &payload) == nil {
 			for key, value := range payload.Settings {
@@ -539,6 +558,24 @@ func (s *State) SetPersistPath(path string) {
 			}
 			for key, value := range payload.Policy {
 				s.policy[key] = value
+			}
+			if payload.History != nil {
+				s.history = payload.History
+			}
+			if payload.Messages != nil {
+				s.messages = payload.Messages
+			}
+			if payload.Requests != nil {
+				s.requests = payload.Requests
+			}
+			if payload.Current.ID != "" {
+				s.current = payload.Current
+				s.queue = payload.Queue
+				s.started = time.UnixMilli(payload.StartedAtMS)
+				s.paused = payload.Paused
+				s.pausedPosition = payload.PausedPosition
+				s.seq = payload.Seq
+				s.audioRev = payload.AudioRev
 			}
 		}
 	}
@@ -552,6 +589,11 @@ func (s *State) saveLocked() {
 	_ = os.MkdirAll(filepath.Dir(s.persistPath), 0o755)
 	raw, _ := json.MarshalIndent(map[string]any{
 		"settings": s.settings, "policy": s.policy,
+		"history": s.history, "messages": s.messages, "requests": s.requests,
+		"current": s.current, "queue": s.queue,
+		"started_at_ms": s.started.UnixMilli(), "paused": s.paused,
+		"paused_position_ms": s.pausedPosition, "seq": s.seq,
+		"audio_rev": s.audioRev,
 	}, "", "  ")
 	_ = os.WriteFile(s.persistPath, raw, 0o600)
 }
