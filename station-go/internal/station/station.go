@@ -180,6 +180,12 @@ func (s *State) Request(track library.Track, nickname string) {
 
 }
 
+func (s *State) Revision() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return fmt.Sprintf("%d:%d", s.seq, s.audioRev)
+}
+
 func (s *State) Current() library.Track {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

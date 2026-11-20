@@ -7,7 +7,11 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,32 +120,84 @@ type Session struct {
 	closed   bool
 	cmd      *exec.Cmd
 	duration int64
+	realtime bool
 }
 
 func NewSession(track library.Track) (*Session, error) {
+	var reader io.ReadCloser
+	var cmd *exec.Cmd
+	format := strings.ToLower(track.Format)
 	input := track.Path
 	if track.URL != "" {
 		input = track.URL
 	}
-	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-i", input, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
+	// MP3 already on disk or served as audio/mpeg can go straight into the
+	// frame parser. Re-encoding a 128 kbps MP3 only burns CPU and adds latency.
+	mp3 := track.Path != "" && strings.EqualFold(filepath.Ext(track.Path), ".mp3")
+	if track.URL != "" {
+		mp3 = isMP3Response(track.URL)
 	}
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	if mp3 {
+		if track.Path != "" {
+			file, err := os.Open(track.Path)
+			if err != nil {
+				return nil, err
+			}
+			reader = file
+		} else {
+			response, err := http.Get(track.URL)
+			if err != nil {
+				return nil, err
+			}
+			if response.StatusCode < 200 || response.StatusCode >= 300 {
+				response.Body.Close()
+				return nil, fmt.Errorf("upstream HTTP %d", response.StatusCode)
+			}
+			reader = response.Body
+		}
+	} else {
+		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-i", input, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"}
+		cmd = exec.Command("ffmpeg", args...)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, err
+		}
+		cmd.Stderr = io.Discard
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		reader = stdout
 	}
+	_ = format
 	s := &Session{
 		streamID: uint32(rand.Uint32()&0x7fffffff) + 1,
 		track:    track,
 		nextSeq:  0,
 		cmd:      cmd,
 		duration: track.DurationMS,
+		realtime: mp3,
 	}
 	s.cond = sync.NewCond(&s.mu)
-	go s.readLoop(stdout)
+	go s.readLoop(reader)
 	return s, nil
+}
+
+func isMP3Response(rawURL string) bool {
+	client := &http.Client{Timeout: 8 * time.Second}
+	request, err := http.NewRequest(http.MethodHead, rawURL, nil)
+	if err != nil {
+		return false
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 400 {
+		return false
+	}
+	contentType := strings.ToLower(response.Header.Get("Content-Type"))
+	return strings.Contains(contentType, "audio/mpeg") || strings.Contains(contentType, "audio/mp3")
 }
 
 func (s *Session) readLoop(reader io.ReadCloser) {
@@ -164,6 +220,9 @@ func (s *Session) readLoop(reader io.ReadCloser) {
 		}
 		s.cond.Broadcast()
 		s.mu.Unlock()
+		if s.realtime {
+			time.Sleep(time.Duration(duration) * time.Millisecond)
+		}
 		current = nil
 		duration = 0
 	}
@@ -209,7 +268,9 @@ func (s *Session) readLoop(reader io.ReadCloser) {
 			s.eof = true
 			s.cond.Broadcast()
 			s.mu.Unlock()
-			_ = s.cmd.Wait()
+			if s.cmd != nil {
+				_ = s.cmd.Wait()
+			}
 			return
 		}
 	}
@@ -284,7 +345,7 @@ func (s *Session) Close() {
 	s.closed = true
 	s.cond.Broadcast()
 	s.mu.Unlock()
-	if s.cmd.Process != nil {
+	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
 	}
 }
@@ -292,18 +353,18 @@ func (s *Session) Close() {
 type Hub struct {
 	mu      sync.Mutex
 	session *Session
-	trackID string
+	key     string
 }
 
 func NewHub() *Hub { return &Hub{} }
 
-func (h *Hub) Manifest(track library.Track) (map[string]any, error) {
+func (h *Hub) Manifest(track library.Track, key string) (map[string]any, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if track.ID == "" {
 		return nil, io.EOF
 	}
-	if h.session == nil || h.trackID != track.ID {
+	if h.session == nil || h.key != key {
 		if h.session != nil {
 			h.session.Close()
 		}
@@ -312,7 +373,7 @@ func (h *Hub) Manifest(track library.Track) (map[string]any, error) {
 			return nil, err
 		}
 		h.session = session
-		h.trackID = track.ID
+		h.key = key
 	}
 	return h.session.Manifest(), nil
 }

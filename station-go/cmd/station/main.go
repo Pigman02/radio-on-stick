@@ -50,6 +50,8 @@ type api struct {
 	listenerMu    sync.Mutex
 	listeners     map[string]time.Time
 	listenerNames map[string]string
+	mp3Mu         sync.Mutex
+	mp3Cache      map[string]bool
 }
 
 func env(key, fallback string) string {
@@ -376,7 +378,7 @@ func (a *api) mediaUpload(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
 	track := a.state.Current()
-	manifest, err := a.source.Manifest(track)
+	manifest, err := a.source.Manifest(track, a.state.Revision())
 	if err != nil {
 		writeJSON(w, 409, map[string]any{"error": "no_stream"})
 		return
@@ -399,6 +401,71 @@ func (a *api) sourceChunk(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(frame)
 }
 
+func (a *api) remoteIsMP3(rawURL string) bool {
+	a.mp3Mu.Lock()
+	if known, ok := a.mp3Cache[rawURL]; ok {
+		a.mp3Mu.Unlock()
+		return known
+	}
+	a.mp3Mu.Unlock()
+	client := &http.Client{Timeout: 8 * time.Second}
+	request, err := http.NewRequest(http.MethodHead, rawURL, nil)
+	if err != nil {
+		return false
+	}
+	response, err := client.Do(request)
+	ok := false
+	if err == nil {
+		defer response.Body.Close()
+		contentType := strings.ToLower(response.Header.Get("Content-Type"))
+		ok = response.StatusCode >= 200 && response.StatusCode < 400 &&
+			(strings.Contains(contentType, "audio/mpeg") || strings.Contains(contentType, "audio/mp3"))
+	}
+	a.mp3Mu.Lock()
+	a.mp3Cache[rawURL] = ok
+	a.mp3Mu.Unlock()
+	return ok
+}
+
+func (a *api) proxyRemoteAudio(w http.ResponseWriter, r *http.Request, rawURL string) {
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, rawURL, nil)
+	if err != nil {
+		http.Error(w, "audio unavailable", http.StatusBadGateway)
+		return
+	}
+	if value := r.Header.Get("Range"); value != "" {
+		request.Header.Set("Range", value)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		http.Error(w, "audio unavailable", http.StatusBadGateway)
+		return
+	}
+	defer response.Body.Close()
+	for _, header := range []string{"Content-Type", "Content-Length", "Accept-Ranges", "Content-Range"} {
+		if value := response.Header.Get(header); value != "" {
+			w.Header().Set(header, value)
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(response.StatusCode)
+	buffer := make([]byte, 32*1024)
+	for {
+		n, readErr := response.Body.Read(buffer)
+		if n > 0 {
+			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
+				return
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			return
+		}
+	}
+}
+
 func (a *api) native(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/native/")
 	track, ok := a.index.Get(id)
@@ -411,6 +478,10 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if track.URL != "" {
+		if a.remoteIsMP3(track.URL) {
+			a.proxyRemoteAudio(w, r, track.URL)
+			return
+		}
 		cmd := exec.CommandContext(r.Context(), "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-i", track.URL, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -992,6 +1063,7 @@ func main() {
 		pluginCache: map[string]plugins.Candidate{},
 		listeners:   map[string]time.Time{},
 		listenerNames: map[string]string{},
+		mp3Cache:      map[string]bool{},
 	}
 	if raw, err := os.ReadFile(a.backgroundFile); err == nil {
 		_ = json.Unmarshal(raw, &a.backgroundURLs)
