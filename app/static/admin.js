@@ -408,6 +408,10 @@
 
   function renderAll() {
     if (!state.data) return;
+    const libraryTab = document.querySelector('.admin-console-tab[data-tab="library"]');
+    const hasLibrary = Boolean(state.data.library);
+    if (libraryTab) libraryTab.classList.toggle("hidden", !hasLibrary);
+    if (!hasLibrary && state.tab === "library") state.tab = "tracks";
     renderTracks();
     renderLibrary();
     renderPolicy();
@@ -508,8 +512,12 @@
     if (!body) return;
     if (state.tab !== "library") return;
     clear(body);
-    const wrap = section("服务器资料库", "扫描服务器本机目录");
     const library = state.data.library || {};
+    if (!state.data.library) {
+      body.appendChild(el("p", "empty", "此版本的电台不支持服务器资料库设置。"));
+      return;
+    }
+    const wrap = section("服务器资料库", "扫描服务器本机目录");
     const dirs = Array.isArray(library.dirs) ? library.dirs : [];
     wrap.appendChild(el("p", "admin-note", `当前索引曲目：${library.tracks || 0}`));
     const label = el("label", "admin-field");
