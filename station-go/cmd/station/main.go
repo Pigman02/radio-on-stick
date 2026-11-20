@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"radio-on-stick/station-go/internal/library"
+	"radio-on-stick/station-go/internal/station"
 )
 
 type api struct {
@@ -19,6 +20,7 @@ type api struct {
 	libraryDir []string
 	adminToken string
 	scanMu     sync.Mutex
+	state      *station.State
 }
 
 func env(key, fallback string) string {
@@ -69,6 +71,7 @@ func (a *api) scan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": "scan_failed", "message": err.Error()})
 		return
 	}
+	a.state.Rebuild()
 	writeJSON(w, 200, map[string]any{"ok": true, "tracks": count})
 }
 
@@ -114,6 +117,89 @@ func (a *api) stream(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, filepath.Base(track.Path), info.ModTime(), file)
 }
 
+func (a *api) now(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.state.Snapshot())
+}
+
+func (a *api) stateJSON(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.state.State())
+}
+
+func (a *api) config(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{
+		"station_name": "Go Radio Station", "subtitle": "local library",
+		"page_title": "Go Radio Station", "notice": "",
+		"background_interval_sec": 300, "backgrounds": []any{},
+	})
+}
+
+func (a *api) request(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "method"})
+		return
+	}
+	var body struct {
+		TrackID string `json:"track_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	track, ok := a.index.Get(body.TrackID)
+	if !ok {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
+	}
+	a.state.Request(track)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) skip(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	a.state.Skip()
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) pause(w http.ResponseWriter, r *http.Request) {
+	if !a.authorized(r) {
+		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Paused bool `json:"paused"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	a.state.Pause(body.Paused)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) native(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/native/")
+	track, ok := a.index.Get(id)
+	if !ok || track.Path == "" {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
+	}
+	file, err := os.Open(track.Path)
+	if err != nil {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": "stat_failed"})
+		return
+	}
+	http.ServeContent(w, r, filepath.Base(track.Path), info.ModTime(), file)
+}
+
 func main() {
 	dirs := strings.Split(env("RADIO_LIBRARY_DIRS", ""), string(os.PathListSeparator))
 	clean := make([]string, 0, len(dirs))
@@ -130,19 +216,36 @@ func main() {
 			log.Printf("library indexed %d tracks", count)
 		}
 	}
+	state := station.New(index, env("RADIO_STATION_NAME", "Go Radio Station"))
+	state.Rebuild()
 	a := &api{
 		index:      index,
 		libraryDir: clean,
 		adminToken: os.Getenv("RADIO_GO_ADMIN_TOKEN"),
+		state:      state,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
+	mux.HandleFunc("/now.json", a.now)
+	mux.HandleFunc("/api/state", a.stateJSON)
+	mux.HandleFunc("/api/config", a.config)
+	mux.HandleFunc("/api/request", a.request)
+	mux.HandleFunc("/api/admin/skip", a.skip)
+	mux.HandleFunc("/api/admin/pause", a.pause)
+	mux.HandleFunc("/native/", a.native)
 	mux.HandleFunc("/api/library/search", a.search)
 	mux.HandleFunc("/api/library", a.list)
 	mux.HandleFunc("/api/library/track/", a.track)
 	mux.HandleFunc("/api/library/stream/", a.stream)
 	mux.HandleFunc("/api/admin/library/scan", a.scan)
 	addr := env("RADIO_GO_ADDR", "127.0.0.1:8091")
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			state.Tick()
+		}
+	}()
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
