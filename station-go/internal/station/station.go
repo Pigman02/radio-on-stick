@@ -25,6 +25,18 @@ type History struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+type QueueEntry struct {
+	QueueID   int64  `json:"queue_id"`
+	TrackID   string `json:"track_id"`
+	Title     string `json:"title"`
+	Artist    string `json:"artist"`
+	CoverURL  string `json:"cover_url"`
+	Nickname  string `json:"nickname"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"created_at"`
+	PinCount  int    `json:"pin_count"`
+}
+
 type State struct {
 	mu       sync.RWMutex
 	index    *library.Index
@@ -37,7 +49,9 @@ type State struct {
 	audioRev int
 	messages []Message
 	history  []History
+	requests []QueueEntry
 	nextID   int
+	queueID  int64
 }
 
 func New(index *library.Index, name string) *State {
@@ -119,6 +133,17 @@ func (s *State) Request(track library.Track, nickname string) {
 	if len(s.history) > 200 {
 		s.history = s.history[:200]
 	}
+	for _, entry := range s.requests {
+		if entry.TrackID == track.ID && entry.Status == "pending" {
+			return
+		}
+	}
+	s.queueID++
+	s.requests = append(s.requests, QueueEntry{
+		QueueID: s.queueID, TrackID: track.ID, Title: track.Title,
+		Artist: track.Artist, Nickname: nickname, Status: "pending",
+		CreatedAt: time.Now().UnixMilli(),
+	})
 	for _, item := range s.queue {
 		if item.ID == track.ID {
 			return
@@ -185,9 +210,15 @@ func (s *State) State() map[string]any {
 	s.tickLocked(time.Now())
 	upcoming := make([]library.Track, len(s.queue))
 	copy(upcoming, s.queue)
+	messages := make([]Message, len(s.messages))
+	copy(messages, s.messages)
+	history := make([]History, len(s.history))
+	copy(history, s.history)
+	requests := make([]QueueEntry, len(s.requests))
+	copy(requests, s.requests)
 	return map[string]any{
-		"now": s.SnapshotLocked(), "upcoming": upcoming, "queue": []any{},
-		"messages": s.messages, "history": s.history, "listeners": 1,
+		"now": s.SnapshotLocked(), "upcoming": upcoming, "queue": requests,
+		"messages": messages, "history": history, "listeners": 1,
 	}
 }
 
@@ -217,6 +248,39 @@ func (s *State) History() []History {
 	result := make([]History, len(s.history))
 	copy(result, s.history)
 	return result
+}
+
+func (s *State) Queue() []QueueEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]QueueEntry, len(s.requests))
+	copy(result, s.requests)
+	return result
+}
+
+func (s *State) Cancel(queueID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, entry := range s.requests {
+		if entry.QueueID == queueID {
+			s.requests = append(s.requests[:index], s.requests[index+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (s *State) Pin(queueID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index, entry := range s.requests {
+		if entry.QueueID == queueID {
+			entry.PinCount++
+			s.requests = append([]QueueEntry{entry}, append(s.requests[:index], s.requests[index+1:]...)...)
+			return true
+		}
+	}
+	return false
 }
 
 func (s *State) Name() string { return s.name }

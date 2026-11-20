@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +29,7 @@ type api struct {
 	source     *stream.Hub
 	mesh       *mesh.Hub
 	staticDir  string
+	uploadsDir string
 }
 
 func env(key, fallback string) string {
@@ -189,6 +193,15 @@ func (a *api) meshStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a.mesh.Status())
 }
 
+func (a *api) mediaUpload(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/media/uploads/")
+	if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(a.uploadsDir, name))
+}
+
 func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
 	track := a.state.Current()
 	manifest, err := a.source.Manifest(track)
@@ -247,6 +260,74 @@ func (a *api) root(w http.ResponseWriter, r *http.Request) {
 	http.FileServer(http.Dir(a.staticDir)).ServeHTTP(w, r)
 }
 
+func (a *api) queueCancel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		QueueID int64 `json:"queue_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	if !a.state.Cancel(body.QueueID) {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) queuePin(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		QueueID int64 `json:"queue_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_json"})
+		return
+	}
+	if !a.state.Pin(body.QueueID) {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *api) upload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, map[string]any{"error": "method"})
+		return
+	}
+	filename := r.Header.Get("X-Filename")
+	if decoded, err := url.QueryUnescape(filename); err == nil {
+		filename = decoded
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	allowed := map[string]bool{".mp3": true, ".aac": true, ".m4a": true, ".ogg": true, ".oga": true, ".opus": true, ".wav": true, ".flac": true, ".webm": true}
+	if !allowed[ext] {
+		writeJSON(w, 400, map[string]any{"error": "bad_extension"})
+		return
+	}
+	base := fmt.Sprintf("upload-%d%s", time.Now().UnixNano(), ext)
+	path := filepath.Join(a.uploadsDir, base)
+	file, err := os.Create(path)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": "open_failed"})
+		return
+	}
+	limited := io.LimitReader(r.Body, 64*1024*1024)
+	n, err := io.Copy(file, limited)
+	_ = file.Close()
+	if err != nil || n == 0 {
+		_ = os.Remove(path)
+		writeJSON(w, 400, map[string]any{"error": "upload_failed"})
+		return
+	}
+	if _, err := a.index.Scan(append(append([]string{}, a.libraryDir...), a.uploadsDir), 50000); err != nil {
+		writeJSON(w, 500, map[string]any{"error": "scan_failed"})
+		return
+	}
+	a.state.Rebuild()
+	writeJSON(w, 200, map[string]any{"ok": true, "name": base})
+}
+
 func (a *api) messages(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -289,7 +370,23 @@ func (a *api) adminState(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "state": a.state.State(), "tracks": a.index.Count()})
+	state := a.state.State()
+	result := map[string]any{
+		"now": state["now"], "upcoming": state["upcoming"], "queue": state["queue"],
+		"messages": state["messages"], "history": state["history"],
+		"policy": map[string]any{
+			"max_listeners": 0, "request_open": true, "upload_open": true,
+			"message_open": true,
+		},
+		"settings": map[string]any{
+			"station_name": "Go Radio Station", "subtitle": "local library",
+			"notice": "", "page_title": "Go Radio Station",
+			"background_interval_sec": 300,
+		},
+		"tracks": a.index.List(200), "backgrounds": []any{},
+		"directory": map[string]any{"enabled": false},
+	}
+	writeJSON(w, 200, result)
 }
 
 func (a *api) adminDeleteMessage(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +420,11 @@ func main() {
 			clean = append(clean, strings.TrimSpace(dir))
 		}
 	}
+	uploadsDir := env("RADIO_GO_UPLOADS", "data/uploads")
+	if err := os.MkdirAll(uploadsDir, 0o755); err != nil {
+		log.Printf("uploads dir: %v", err)
+	}
+	clean = append(clean, uploadsDir)
 	index := library.New()
 	if len(clean) > 0 {
 		if count, err := index.Scan(clean, 50000); err != nil {
@@ -341,6 +443,7 @@ func main() {
 		source:     stream.NewHub(),
 		mesh:       mesh.NewHub(),
 		staticDir:  env("RADIO_STATIC_DIR", "app/static"),
+		uploadsDir: env("RADIO_GO_UPLOADS", "data/uploads"),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.health)
@@ -348,6 +451,10 @@ func main() {
 	mux.HandleFunc("/api/state", a.stateJSON)
 	mux.HandleFunc("/api/config", a.config)
 	mux.HandleFunc("/api/request", a.request)
+	mux.HandleFunc("/api/queue/cancel", a.queueCancel)
+	mux.HandleFunc("/api/queue/pin", a.queuePin)
+	mux.HandleFunc("/api/upload", a.upload)
+	mux.HandleFunc("/media/uploads/", a.mediaUpload)
 	mux.HandleFunc("/api/messages", a.messages)
 	mux.HandleFunc("/api/vote-skip", a.voteSkip)
 	mux.HandleFunc("/api/report", a.report)
