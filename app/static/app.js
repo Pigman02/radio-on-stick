@@ -1083,6 +1083,9 @@ function renderTrack(now) {
 }
 
 function renderNext(next) {
+  // When there is no upcoming request, recover the visual balance of the
+  // empty next row by nudging the title block and current lyric down.
+  playbackPage.classList.toggle("no-next", !next);
   if (!next) {
     nextTrackInfo.classList.add("empty");
     return;

@@ -5765,3 +5765,12 @@ html[data-theme="light"] .volume-flyout input[type="range"]::-moz-range-thumb {
 .chat-page .message-form.live .send-btn {
   right: calc(2.5% + 5px);
 }
+
+/* No upcoming request: the next-track row collapses to zero height. Nudge the
+   title/artist/album and current lyric down slightly instead of leaving the
+   whole block visually high. The offset scales with viewport height. */
+.playback-page.no-next .track-meta,
+.playback-page.no-next .current-lyric {
+  position: relative;
+  top: clamp(8px, 1.2vh, 12px);
+}
