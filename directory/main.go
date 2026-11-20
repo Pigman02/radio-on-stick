@@ -170,6 +170,22 @@ func (s *Store) upsert(station Station, hashes []string) error {
 	return s.persistLocked()
 }
 
+func (s *Store) remove(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec := s.records[id]
+	if rec == nil {
+		return os.ErrNotExist
+	}
+	for _, hash := range rec.InviteHashes {
+		if s.hashes[hash] == id {
+			delete(s.hashes, hash)
+		}
+	}
+	delete(s.records, id)
+	return s.persistLocked()
+}
+
 func (s *Store) heartbeat(id string, endpoints []Endpoint, connectivity []string) (*Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -371,6 +387,33 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) deleteStation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	if !a.authorized(r, "") {
+		jsonError(w, http.StatusUnauthorized, "unauthorized", "Directory 注册凭证无效")
+		return
+	}
+	var req struct {
+		StationID string `json:"station_id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := a.store.remove(req.StationID); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			jsonError(w, http.StatusNotFound, "not_found", "电台不存在")
+			return
+		}
+		jsonError(w, http.StatusInternalServerError, "store_error", "删除失败")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
 func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "method", "POST only")
@@ -546,6 +589,7 @@ func main() {
 	mux.HandleFunc("/v1/health", app.health)
 	mux.HandleFunc("/v1/resolve", app.resolve)
 	mux.HandleFunc("/v1/stations", app.register)
+	mux.HandleFunc("/v1/admin/delete", app.deleteStation)
 	mux.HandleFunc("/v1/stations/", app.heartbeat)
 	mux.HandleFunc("/j", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
