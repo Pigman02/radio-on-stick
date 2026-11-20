@@ -652,6 +652,44 @@ func (a *api) proxyRemoteAudio(w http.ResponseWriter, r *http.Request, rawURL st
 	}
 }
 
+func (a *api) coverProxy(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(r.URL.Query().Get("url"))
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_cover"})
+		return
+	}
+	host := strings.ToLower(parsed.Hostname())
+	allowed := host == "bilibili.com" || strings.HasSuffix(host, ".bilibili.com") ||
+		host == "hdslb.com" || strings.HasSuffix(host, ".hdslb.com")
+	if !allowed {
+		writeJSON(w, 400, map[string]any{"error": "bad_cover_host"})
+		return
+	}
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_cover"})
+		return
+	}
+	request.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
+	request.Header.Set("Referer", "https://www.bilibili.com/")
+	client := &http.Client{Timeout: 12 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": "cover_upstream"})
+		return
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		writeJSON(w, 502, map[string]any{"error": "cover_upstream"})
+		return
+	}
+	w.Header().Set("Content-Type", response.Header.Get("Content-Type"))
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(response.StatusCode)
+	_, _ = io.Copy(w, io.LimitReader(response.Body, 8*1024*1024))
+}
+
 func (a *api) native(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/native/")
 	track, ok := a.index.Get(id)
@@ -1120,9 +1158,19 @@ func (a *api) report(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) lyrics(w http.ResponseWriter, r *http.Request) {
 	trackID := strings.TrimPrefix(r.URL.Path, "/api/lyrics/")
+	source, sourceID, found := strings.Cut(trackID, ":")
+	if !found {
+		if track, ok := a.state.TrackByID(trackID); ok {
+			source, sourceID = track.Source, track.SourceID
+		} else if track, ok := a.index.Get(trackID); ok {
+			source, sourceID = track.Source, track.SourceID
+		}
+	}
 	lrc, translation := "", ""
-	if source, sourceID, found := strings.Cut(trackID, ":"); found && a.plugins != nil {
-		lrc, translation = a.plugins.Lyrics(source, sourceID)
+	if found || (source != "" && sourceID != "") {
+		if a.plugins != nil {
+			lrc, translation = a.plugins.Lyrics(source, sourceID)
+		}
 	}
 	writeJSON(w, 200, map[string]any{"track_id": trackID, "lrc": lrc, "translation": translation})
 }
@@ -1545,6 +1593,7 @@ func main() {
 	mux.HandleFunc("/api/admin/resume", a.resume)
 	mux.HandleFunc("/api/admin/directory/rotate", a.adminDirectory)
 	mux.HandleFunc("/api/admin/directory/refresh", a.adminDirectory)
+	mux.HandleFunc("/api/cover", a.coverProxy)
 	mux.HandleFunc("/native/", a.native)
 	mux.HandleFunc("/ws", a.mesh.ServeHTTP)
 	mux.HandleFunc("/mesh.json", a.meshStatus)

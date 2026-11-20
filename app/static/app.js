@@ -176,6 +176,20 @@ const FORCE_P2P = new URLSearchParams(location.search).get("p2p") === "1";
 const EDGE_NATIVE = /\bEdg\//i.test(navigator.userAgent) && !FORCE_P2P;
 const mesh = LOCAL_DIRECT || EDGE_NATIVE ? null : window.RadioMesh || null;
 
+function coverSource(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "/placeholder.svg";
+  try {
+    const parsed = new URL(raw, location.href);
+    if (parsed.protocol === "https:" && /(^|\.)hdslb\.com$/i.test(parsed.hostname)) {
+      return `/api/cover?url=${encodeURIComponent(parsed.href)}`;
+    }
+    return parsed.href;
+  } catch (_) {
+    return "/placeholder.svg";
+  }
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -1019,7 +1033,7 @@ function renderTrack(now) {
   setupMarquee(title);
   durationEl.textContent = fmtTime(now.duration_ms, track.duration_estimated);
   sourceBadge.textContent = sourceLabel(track.source);
-  const newCover = track.cover_url || "/placeholder.svg";
+  const newCover = coverSource(track.cover_url);
   if (cover.getAttribute("src") !== newCover) {
     cover.src = newCover;
   }
@@ -1037,7 +1051,7 @@ function renderNext(next) {
     return;
   }
   nextTrackInfo.classList.remove("empty");
-  const image = next.cover_url || "/placeholder.svg";
+  const image = coverSource(next.cover_url);
   if (nextCover.getAttribute("src") !== image) nextCover.src = image;
   nextTitle.textContent = next.title || "未知曲目";
   nextArtist.textContent = [next.artist || "未知歌手", next.album || ""]
@@ -1533,7 +1547,7 @@ function preloadNext(now = state.now) {
   if (!document.hidden) {
     if (next.cover_url) {
       const image = new Image();
-      image.src = next.cover_url;
+      image.src = coverSource(next.cover_url);
       state.preloadCover = image;
     }
     if (next.lyrics_url) {
@@ -2009,7 +2023,7 @@ function renderPlaylist(items) {
 
     const image = document.createElement("img");
     image.className = "playlist-cover";
-    image.src = item.cover_url || "/placeholder.svg";
+    image.src = coverSource(item.cover_url);
     image.alt = "";
     image.onerror = () => {
       if (!image.src.endsWith("/placeholder.svg")) image.src = "/placeholder.svg";
@@ -2320,7 +2334,7 @@ function renderHistory(items) {
 
     const image = document.createElement("img");
     image.className = "playlist-cover";
-    image.src = item.cover_url || "/placeholder.svg";
+    image.src = coverSource(item.cover_url);
     image.alt = "";
     image.onerror = () => {
       if (!image.src.endsWith("/placeholder.svg")) image.src = "/placeholder.svg";
@@ -2465,7 +2479,7 @@ function renderPublicSearchResults(results) {
 
     const image = document.createElement("img");
     image.className = "search-cover";
-    image.src = item.cover_url || "/placeholder.svg";
+    image.src = coverSource(item.cover_url);
     image.alt = "";
     image.onerror = () => {
       if (!image.src.endsWith("/placeholder.svg")) image.src = "/placeholder.svg";

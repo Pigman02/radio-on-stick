@@ -301,6 +301,20 @@ func (s *State) Revision() string {
 	return fmt.Sprintf("%d:%d", s.seq, s.audioRev)
 }
 
+func (s *State) TrackByID(id string) (library.Track, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.current.ID == id {
+		return s.current, true
+	}
+	for _, track := range s.queue {
+		if track.ID == id {
+			return track, true
+		}
+	}
+	return library.Track{}, false
+}
+
 func (s *State) Current() library.Track {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
