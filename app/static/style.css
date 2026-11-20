@@ -5713,6 +5713,8 @@ html[data-theme="light"] .player-dock .volume-toggle.muted {
     writing-mode: horizontal-tb;
     direction: ltr;
     background: transparent !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
   }
 }
 
