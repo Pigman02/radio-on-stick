@@ -720,6 +720,9 @@ class RadioHandler(BaseHTTPRequestHandler):
         if path == "/api/search":
             self._handle_search(parsed.query)
             return
+        if path == "/api/cover":
+            self._handle_cover(parsed.query)
+            return
         if path.startswith("/api/lyrics/"):
             track_id = urllib.parse.unquote(path[len("/api/lyrics/") :])
             track = self.app.db.get_track(track_id)
@@ -981,6 +984,44 @@ class RadioHandler(BaseHTTPRequestHandler):
                 "X-Chunk-Bytes": str(len(chunk.payload)),
             },
         )
+
+    def _handle_cover(self, query_string: str) -> None:
+        params = urllib.parse.parse_qs(query_string)
+        raw = str((params.get("url") or [""])[0]).strip()
+        try:
+            parts = urllib.parse.urlsplit(raw)
+        except ValueError:
+            raise ApiError(400, "bad_cover", "封面地址无效")
+        host = (parts.hostname or "").lower().rstrip(".")
+        if parts.scheme != "https" or parts.username or parts.password or not (
+            host.endswith(".hdslb.com") or host == "hdslb.com"
+        ):
+            raise ApiError(400, "bad_cover", "封面地址不允许")
+        request = urllib.request.Request(
+            raw,
+            headers={
+                "User-Agent": self.app.config.user_agent,
+                "Referer": "https://www.bilibili.com/",
+                "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
+            },
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=15)
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            raise ApiError(502, "cover_upstream", "封面获取失败") from exc
+        try:
+            content_type = str(response.headers.get("Content-Type") or "image/jpeg")
+            data = response.read(8 * 1024 * 1024)
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(data)
+        finally:
+            response.close()
 
     def _handle_search(self, query_string: str) -> None:
         params = urllib.parse.parse_qs(query_string)
