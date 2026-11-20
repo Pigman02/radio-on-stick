@@ -731,7 +731,13 @@ func (a *api) adminDirectory(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if strings.TrimSpace(body.Code) != "" {
 			if err := a.directory.SetInvite(body.Code); err != nil {
-				writeJSON(w, 400, map[string]any{"error": "invalid_invite", "message": err.Error()})
+				status := 400
+				message := err.Error()
+				if strings.Contains(message, "409") {
+					status = 409
+					message = "邀请码已被其他电台使用"
+				}
+				writeJSON(w, status, map[string]any{"error": "invalid_invite", "message": message})
 				return
 			}
 		} else {

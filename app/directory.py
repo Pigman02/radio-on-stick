@@ -204,17 +204,35 @@ class DirectoryClient:
         if len(code) != 16 or any(char not in _ALPHABET for char in code):
             raise ValueError("邀请码必须是 16 位 Crockford Base32")
         with self._lock:
+            old_code = self._invite_code
+            old_registered = self._registered
             self._invite_code = code
             self.db.set_setting(_KEY_INVITE_CODE, code)
             self._registered = False
-        return self.refresh()
+        try:
+            return self.refresh()
+        except Exception:
+            with self._lock:
+                self._invite_code = old_code
+                self._registered = old_registered
+                self.db.set_setting(_KEY_INVITE_CODE, old_code)
+            raise
 
     def rotate_invite(self) -> dict[str, Any]:
         with self._lock:
+            old_code = self._invite_code
+            old_registered = self._registered
             self._invite_code = new_invite_code()
             self.db.set_setting(_KEY_INVITE_CODE, self._invite_code)
             self._registered = False
-        return self.refresh()
+        try:
+            return self.refresh()
+        except Exception:
+            with self._lock:
+                self._invite_code = old_code
+                self._registered = old_registered
+                self.db.set_setting(_KEY_INVITE_CODE, old_code)
+            raise
 
     def _loop(self) -> None:
         while not self._stop.is_set():

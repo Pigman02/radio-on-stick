@@ -262,18 +262,36 @@ func (c *Client) SetInvite(raw string) error {
 		}
 	}
 	c.mu.Lock()
+	oldCode := c.Identity.InviteCode
+	oldRegistered := c.registered
 	c.Identity.InviteCode = code
 	c.registered = false
 	c.mu.Unlock()
 	c.save()
-	return c.Refresh()
+	if err := c.Refresh(); err != nil {
+		c.mu.Lock()
+		c.Identity.InviteCode = oldCode
+		c.registered = oldRegistered
+		c.mu.Unlock()
+		c.save()
+		return err
+	}
+	return nil
 }
 
 func (c *Client) Rotate() {
 	c.mu.Lock()
+	oldCode := c.Identity.InviteCode
+	oldRegistered := c.registered
 	c.Identity.InviteCode = newCode()
 	c.registered = false
 	c.mu.Unlock()
 	c.save()
-	_ = c.Refresh()
+	if err := c.Refresh(); err != nil {
+		c.mu.Lock()
+		c.Identity.InviteCode = oldCode
+		c.registered = oldRegistered
+		c.mu.Unlock()
+		c.save()
+	}
 }

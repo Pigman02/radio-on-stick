@@ -868,6 +868,8 @@ class RadioHandler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 raise ApiError(400, "invalid_invite", str(exc)) from exc
             except Exception as exc:
+                if "409" in str(exc):
+                    raise ApiError(409, "invite_conflict", "邀请码已被其他电台使用") from exc
                 raise ApiError(502, "directory_error", str(exc)) from exc
             self._send_json(200, {"ok": True, "directory": status})
             return

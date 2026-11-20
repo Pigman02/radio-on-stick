@@ -144,9 +144,18 @@ func (s *Store) upsert(station Station, hashes []string) error {
 			return errors.New("directory is full")
 		}
 	}
+	// Check every new hash before mutating the old record. If a hash belongs
+	// to another station, the previous invite must remain valid.
+	for _, hash := range hashes {
+		if other, exists := s.hashes[hash]; exists && other != station.StationID {
+			return errors.New("invite hash already assigned")
+		}
+	}
 	if old := s.records[station.StationID]; old != nil {
 		for _, hash := range old.InviteHashes {
-			delete(s.hashes, hash)
+			if s.hashes[hash] == station.StationID {
+				delete(s.hashes, hash)
+			}
 		}
 	}
 	rec := &Record{
@@ -155,9 +164,6 @@ func (s *Store) upsert(station Station, hashes []string) error {
 		LastSeen:     time.Now().Unix(),
 	}
 	for _, hash := range hashes {
-		if other, exists := s.hashes[hash]; exists && other != station.StationID {
-			return errors.New("invite hash already assigned")
-		}
 		s.hashes[hash] = station.StationID
 	}
 	s.records[station.StationID] = rec
