@@ -210,7 +210,6 @@ function restoreMarqueeText(element, text) {
   element.classList.remove("marquee");
   element.style.removeProperty("--marquee-distance");
   element.style.removeProperty("--marquee-duration");
-  element.style.removeProperty("--marquee-shift");
 }
 
 function setupMarquee(element, force = false) {
@@ -224,8 +223,9 @@ function setupMarquee(element, force = false) {
     element.dataset.marqueeText = "";
     return;
   }
-  // Re-rendering a track must not restart an already-running marquee.
-  if (!force && element.dataset.marqueeText === text) return;
+  // Re-rendering a track must not restart an already-running marquee. If the
+  // track node was removed by a textContent refresh, rebuild it.
+  if (!force && existingTrack && element.dataset.marqueeText === text) return;
   element.dataset.marqueeText = text;
   if (element.classList.contains("hidden") || element.clientWidth < 2) {
     restoreMarqueeText(element, text);
@@ -250,10 +250,8 @@ function setupMarquee(element, force = false) {
     element.appendChild(track);
     requestAnimationFrame(() => {
       if (element.dataset.marqueeText !== text) return;
-      const gap = 32;
-      const shift = Math.max(1, first.getBoundingClientRect().width + gap);
-      element.style.setProperty("--marquee-shift", `-${shift}px`);
-      element.style.setProperty("--marquee-duration", `${Math.max(7, shift / 22)}s`);
+      const copyWidth = Math.max(1, first.getBoundingClientRect().width);
+      track.style.animationDuration = `${Math.max(7, copyWidth / 22)}s`;
       element.classList.add("marquee");
     });
   });
@@ -1061,7 +1059,12 @@ function setLivePill() {
 
 function renderTrack(now) {
   const track = now.track;
-  title.textContent = track.title || "未知曲目";
+  const trackTitle = track.title || "未知曲目";
+  // Do not replace the marquee track node on every poll. It must keep the
+  // same animation for the lifetime of the title.
+  if (title.dataset.marqueeText !== trackTitle || !title.querySelector(".marquee-track")) {
+    title.textContent = trackTitle;
+  }
   artist.textContent = track.artist || "--";
   album.textContent = track.album || "--";
   setupMarquee(title);
@@ -1987,9 +1990,17 @@ function syncCurrentLyric(index, animate = false) {
   const line = index >= 0 ? state.lyricsLines[index] : null;
   const row = index >= 0 ? state.lyricEls[index] : null;
   const translation = row ? row.querySelector(".lyric-translation") : null;
-  currentLyricText.textContent = line ? line.text : "♪";
-  currentLyricTrans.textContent =
+  const lyricText = line ? line.text : "♪";
+  const translationText =
     translation && state.showTranslation ? translation.textContent : "";
+  if (currentLyricText.dataset.marqueeText !== lyricText ||
+      !currentLyricText.querySelector(".marquee-track")) {
+    currentLyricText.textContent = lyricText;
+  }
+  if (currentLyricTrans.dataset.marqueeText !== translationText ||
+      !currentLyricTrans.querySelector(".marquee-track")) {
+    currentLyricTrans.textContent = translationText;
+  }
   currentLyricTrans.classList.toggle("hidden", !currentLyricTrans.textContent);
   setupMarquee(currentLyricText);
   setupMarquee(currentLyricTrans);

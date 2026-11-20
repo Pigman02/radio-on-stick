@@ -5569,21 +5569,26 @@ html[data-theme="light"] .player-dock .volume-toggle.muted {
 .marquee-track {
   display: inline-flex;
   align-items: baseline;
-  gap: 32px;
-  width: max-content;
   white-space: nowrap;
   will-change: transform;
-  animation: marquee-left var(--marquee-duration, 12s) linear infinite;
+  animation: marquee-left 12s linear infinite;
+  -webkit-animation: marquee-left 12s linear infinite;
 }
 
 .marquee-copy {
   display: inline-block;
   flex: 0 0 auto;
+  padding-right: 32px;
 }
 
 @keyframes marquee-left {
   from { transform: translateX(0); }
-  to { transform: translateX(var(--marquee-shift, -100%)); }
+  to { transform: translateX(-50%); }
+}
+
+@-webkit-keyframes marquee-left {
+  from { -webkit-transform: translateX(0); }
+  to { -webkit-transform: translateX(-50%); }
 }
 
 /* Full-bleed progress line across the viewport, independent of dock padding. */
