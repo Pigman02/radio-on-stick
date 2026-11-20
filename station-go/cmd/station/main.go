@@ -476,6 +476,10 @@ func (a *api) mediaUpload(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
 	track := a.state.Current()
+	if mp3Only, ok := a.state.Policy()["mp3_remote_only"].(bool); ok && mp3Only && track.URL != "" && !a.remoteIsMP3(track.URL) {
+		writeJSON(w, 415, map[string]any{"error": "mp3_only", "message": "管理员只允许 MP3 第三方音源"})
+		return
+	}
 	manifest, err := a.source.Manifest(track, a.state.Revision(), a.state.PositionMS())
 	if err != nil {
 		writeJSON(w, 409, map[string]any{"error": "no_stream"})
@@ -587,6 +591,10 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		args = append(args, "-i", track.URL, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
+		if mp3Only, ok := a.state.Policy()["mp3_remote_only"].(bool); ok && mp3Only {
+			writeJSON(w, 415, map[string]any{"error": "mp3_only", "message": "管理员只允许 MP3 第三方音源"})
+			return
+		}
 		cmd := exec.CommandContext(r.Context(), "ffmpeg", args...)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
