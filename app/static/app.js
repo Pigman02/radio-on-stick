@@ -2484,7 +2484,9 @@ function renderMessages(items) {
   const previousScrollTop = messageList.scrollTop;
   const previousHeight = messageList.scrollHeight;
   const previousCount = state.lastMessageCount;
-  const ordered = items.slice().reverse();
+  const ordered = items
+    .slice()
+    .sort((left, right) => (Number(left.created_at) || 0) - (Number(right.created_at) || 0));
   state.lastMessageCount = ordered.length;
 
   messageList.textContent = "";
@@ -3335,7 +3337,7 @@ function loadAdminExtension() {
   style.id = "adminExtensionStyle";
   document.head.appendChild(style);
   const script = document.createElement("script");
-  script.src = "/admin.js?v=34";
+  script.src = "/admin.js?v=35";
   script.id = "adminExtensionScript";
   adminExtensionPromise = new Promise((resolve, reject) => {
     script.onload = resolve;

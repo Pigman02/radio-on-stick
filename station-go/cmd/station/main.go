@@ -535,6 +535,9 @@ func (a *api) trackFromHistory(history station.History) (library.Track, bool) {
 
 func (a *api) ensureTrackAudio(track *library.Track) bool {
 	if track == nil || track.ID == "" { return false }
+	// Local library and uploads are files, not remote URLs; they are served by
+	// /native and /source directly from Path.
+	if track.Path != "" { return true }
 	if track.URL != "" { return true }
 	if track.Source == "" || track.SourceID == "" { return false }
 	resolved, err := a.plugins.Resolve(track.Source, track.SourceID)
@@ -1267,23 +1270,131 @@ func (a *api) report(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a.state.Snapshot())
 }
 
+func normalizeLocalLRC(text string) string {
+	var out strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "{") {
+			var payload struct {
+				T int64 `json:"t"`
+				C []struct {
+					Tx string `json:"tx"`
+				} `json:"c"`
+			}
+			if json.Unmarshal([]byte(trimmed), &payload) == nil && len(payload.C) > 0 {
+				var lyric strings.Builder
+				for _, part := range payload.C {
+					lyric.WriteString(part.Tx)
+				}
+				ms := payload.T
+				if ms < 0 { ms = 0 }
+				minutes := ms / 60000
+				seconds := (ms % 60000) / 1000
+				millis := ms % 1000
+				fmt.Fprintf(&out, "[%02d:%02d.%03d]%s\n", minutes, seconds, millis, lyric.String())
+				continue
+			}
+		}
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	return strings.TrimSpace(out.String())
+}
+
+func localLyricsFor(path string) string {
+	if path == "" {
+		return ""
+	}
+	base := strings.TrimSuffix(path, filepath.Ext(path))
+	for _, ext := range []string{".lrc", ".LRC"} {
+		raw, err := os.ReadFile(base + ext)
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		text := strings.TrimPrefix(string(raw), "\ufeff")
+		text = normalizeLocalLRC(text)
+		if strings.TrimSpace(text) != "" {
+			return text
+		}
+	}
+	return ""
+}
+
 func (a *api) lyrics(w http.ResponseWriter, r *http.Request) {
 	trackID := strings.TrimPrefix(r.URL.Path, "/api/lyrics/")
 	source, sourceID, found := strings.Cut(trackID, ":")
-	if !found {
-		if track, ok := a.state.TrackByID(trackID); ok {
-			source, sourceID = track.Source, track.SourceID
-		} else if track, ok := a.index.Get(trackID); ok {
+	localPath := ""
+	if track, ok := a.state.TrackByID(trackID); ok {
+		if !found {
 			source, sourceID = track.Source, track.SourceID
 		}
+		localPath = track.Path
+	} else if track, ok := a.index.Get(trackID); ok {
+		if !found {
+			source, sourceID = track.Source, track.SourceID
+		}
+		localPath = track.Path
 	}
 	lrc, translation := "", ""
-	if found || (source != "" && sourceID != "") {
+	if localPath != "" {
+		lrc = localLyricsFor(localPath)
+	}
+	if lrc == "" && (found || (source != "" && sourceID != "")) && !strings.EqualFold(source, "local") && !strings.EqualFold(source, "upload") {
 		if a.plugins != nil {
 			lrc, translation = a.plugins.Lyrics(source, sourceID)
 		}
 	}
 	writeJSON(w, 200, map[string]any{"track_id": trackID, "lrc": lrc, "translation": translation})
+}
+
+// localCover serves a sidecar image or the embedded album-art stream without
+// exposing arbitrary filesystem paths. Only IDs already present in the index
+// are accepted.
+func (a *api) localCover(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/local-cover/")
+	track, ok := a.index.Get(id)
+	if !ok || track.Path == "" {
+		writeJSON(w, 404, map[string]any{"error": "not_found"})
+		return
+	}
+	base := strings.TrimSuffix(track.Path, filepath.Ext(track.Path))
+	candidates := []string{}
+	for _, ext := range []string{".jpg", ".jpeg", ".png", ".webp"} {
+		candidates = append(candidates,
+			base+ext,
+			filepath.Join(filepath.Dir(track.Path), "cover"+ext),
+			filepath.Join(filepath.Dir(track.Path), "folder"+ext),
+			filepath.Join(filepath.Dir(track.Path), "front"+ext),
+		)
+	}
+	for _, candidate := range candidates {
+		raw, err := os.ReadFile(candidate)
+		if err != nil || len(raw) == 0 || len(raw) > 16*1024*1024 {
+			continue
+		}
+		contentType := http.DetectContentType(raw)
+		if !strings.HasPrefix(contentType, "image/") {
+			continue
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+		_, _ = w.Write(raw)
+		return
+	}
+	// Fall back to an embedded cover. FFmpeg writes the first image stream to
+	// stdout; this avoids creating a permanent cache directory.
+	cmd := exec.CommandContext(r.Context(), "ffmpeg", "-v", "error", "-i", track.Path,
+		"-map", "0:v:0", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1")
+	raw, err := cmd.Output()
+	if err != nil || len(raw) == 0 {
+		writeJSON(w, 404, map[string]any{"error": "no_cover"})
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+	_, _ = w.Write(raw)
 }
 
 func (a *api) adminLibrary(w http.ResponseWriter, r *http.Request) {
@@ -1532,7 +1643,7 @@ func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{
 			"id": track.ID, "source": "local", "source_id": track.ID,
 			"title": track.Title, "artist": track.Artist, "album": track.Album,
-			"duration_ms": track.DurationMS, "cover_url": "", "candidate_id": track.ID,
+			"duration_ms": track.DurationMS, "cover_url": track.CoverURL, "candidate_id": track.ID,
 		})
 	}
 	if a.plugins != nil && strings.TrimSpace(query) != "" {
@@ -1705,6 +1816,7 @@ func main() {
 	mux.HandleFunc("/api/admin/directory/rotate", a.adminDirectory)
 	mux.HandleFunc("/api/admin/directory/refresh", a.adminDirectory)
 	mux.HandleFunc("/api/cover", a.coverProxy)
+	mux.HandleFunc("/api/local-cover/", a.localCover)
 	mux.HandleFunc("/native/", a.native)
 	mux.HandleFunc("/ws", a.mesh.ServeHTTP)
 	mux.HandleFunc("/mesh.json", a.meshStatus)

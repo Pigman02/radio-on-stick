@@ -98,14 +98,12 @@ func scanFile(path string) *Track {
 	if title == "" {
 		title = fileTitle(path)
 	}
+	id := trackID(path)
 	return &Track{
-		ID:         trackID(path),
-		Title:      title,
-		Artist:     artist,
-		Album:      album,
-		DurationMS: duration,
-		Format:     strings.TrimPrefix(ext, "."),
-		Path:       path, Source: "local", SourceID: trackID(path),
+		ID: id, Title: title, Artist: artist, Album: album,
+		DurationMS: duration, Format: strings.TrimPrefix(ext, "."),
+		Path: path, Source: "local", SourceID: id,
+		CoverURL: "/api/local-cover/" + id,
 	}
 }
 
