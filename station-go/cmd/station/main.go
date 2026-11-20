@@ -378,7 +378,7 @@ func (a *api) mediaUpload(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
 	track := a.state.Current()
-	manifest, err := a.source.Manifest(track, a.state.Revision())
+	manifest, err := a.source.Manifest(track, a.state.Revision(), a.state.PositionMS())
 	if err != nil {
 		writeJSON(w, 409, map[string]any{"error": "no_stream"})
 		return

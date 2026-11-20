@@ -123,7 +123,7 @@ type Session struct {
 	realtime bool
 }
 
-func NewSession(track library.Track) (*Session, error) {
+func NewSession(track library.Track, startPositionMS int64) (*Session, error) {
 	var reader io.ReadCloser
 	var cmd *exec.Cmd
 	format := strings.ToLower(track.Format)
@@ -156,7 +156,11 @@ func NewSession(track library.Track) (*Session, error) {
 			reader = response.Body
 		}
 	} else {
-		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-re", "-i", input, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"}
+		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-re"}
+		if startPositionMS > 0 {
+			args = append(args, "-ss", fmt.Sprintf("%.3f", float64(startPositionMS)/1000))
+		}
+		args = append(args, "-i", input, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
 		cmd = exec.Command("ffmpeg", args...)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -173,6 +177,7 @@ func NewSession(track library.Track) (*Session, error) {
 		streamID: uint32(rand.Uint32()&0x7fffffff) + 1,
 		track:    track,
 		nextSeq:  0,
+		startMS:  int(startPositionMS),
 		cmd:      cmd,
 		duration: track.DurationMS,
 		realtime: mp3,
@@ -206,6 +211,7 @@ func (s *Session) readLoop(reader io.ReadCloser) {
 	buffer := make([]byte, 0, 128*1024)
 	var current []byte
 	var duration int
+	skipMS := int64(s.startMS)
 	emit := func() {
 		if len(current) == 0 {
 			return
@@ -254,6 +260,14 @@ func (s *Session) readLoop(reader io.ReadCloser) {
 				if len(buffer) < frame.length {
 					break
 				}
+				if skipMS > 0 {
+					if skipMS >= int64(frame.durationMS) {
+						skipMS -= int64(frame.durationMS)
+						buffer = buffer[frame.length:]
+						continue
+					}
+					skipMS = 0
+				}
 				current = append(current, buffer[:frame.length]...)
 				duration += frame.durationMS
 				buffer = buffer[frame.length:]
@@ -288,7 +302,7 @@ func (s *Session) Manifest() map[string]any {
 		"ok": true, "supported": true, "stream_id": s.streamID,
 		"format": "mp3", "mime": "audio/mpeg", "header_bytes": frameHeaderSize,
 		"chunk_ms": chunkMS, "first_seq": first, "latest_seq": latest,
-		"from_seq": int64(first), "start_position_ms": 0,
+		"from_seq": int64(first), "start_position_ms": s.startMS,
 		"started_at_ms": time.Now().Add(-time.Duration(s.startMS) * time.Millisecond).UnixMilli(),
 		"server_time_ms": time.Now().UnixMilli(), "duration_ms": s.duration,
 		"paused": false, "eof": s.eof,
@@ -358,7 +372,7 @@ type Hub struct {
 
 func NewHub() *Hub { return &Hub{} }
 
-func (h *Hub) Manifest(track library.Track, key string) (map[string]any, error) {
+func (h *Hub) Manifest(track library.Track, key string, startPositionMS int64) (map[string]any, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if track.ID == "" {
@@ -368,7 +382,7 @@ func (h *Hub) Manifest(track library.Track, key string) (map[string]any, error) 
 		if h.session != nil {
 			h.session.Close()
 		}
-		session, err := NewSession(track)
+		session, err := NewSession(track, startPositionMS)
 		if err != nil {
 			return nil, err
 		}

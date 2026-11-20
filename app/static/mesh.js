@@ -25,7 +25,7 @@
   const FNV_PRIME = 0x01000193;
   const LEAD_MS = 1600;
   const SYNC_TOLERANCE_MS = 700;
-  const CATCHUP_MS = 3000;
+  const CATCHUP_MS = 10000;
   const CATCHUP_COOLDOWN_MS = 6000;
   const SOURCE_BUFFER_MS = 3200;
   const MAX_QUEUE_FRAMES = 120;
@@ -392,7 +392,9 @@
         // current live edge instead of staying seconds behind forever.
         lastCatchupAt = Date.now();
         if (sourceRole()) {
-          restartSource();
+          // The serving node is already the live source. Rebuilding its
+          // MediaSource here causes the audible 0 -> live jumps users see.
+          return;
         } else {
           const mime = currentStream ? currentStream.mime : "audio/mpeg";
           accepted = freshAccepted();

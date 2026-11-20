@@ -180,6 +180,22 @@ func (s *State) Request(track library.Track, nickname string) {
 
 }
 
+func (s *State) PositionMS() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.current.ID == "" || s.started.IsZero() {
+		return 0
+	}
+	position := time.Since(s.started).Milliseconds()
+	if s.current.DurationMS > 0 && position > s.current.DurationMS {
+		position = s.current.DurationMS
+	}
+	if position < 0 {
+		position = 0
+	}
+	return position
+}
+
 func (s *State) Revision() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
