@@ -1,9 +1,9 @@
 "use strict";
 
-const CACHE = "radio-shell-v69";
+const CACHE = "radio-shell-v70";
 const SHELL = [
   "/",
-  "/app.js?v=79",
+  "/app.js?v=80",
   "/mesh.js?v=13",
   "/style.css?v=52",
   "/manifest.webmanifest",
@@ -31,6 +31,7 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
   if (
     url.pathname.startsWith("/api/") ||
+    url.pathname === "/now.json" ||
     url.pathname.startsWith("/source/") ||
     url.pathname.startsWith("/native/") ||
     url.pathname.startsWith("/media/") ||

@@ -694,9 +694,15 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/native/")
 	track, ok := a.index.Get(id)
 	if !ok {
-		// Remote/private tracks are not in the local index; use the active track.
-		track = a.state.Current()
-		if track.ID != id {
+		// Remote tracks are not in the local index. The active track and the
+		// already-resolved next track must both be servable: the browser starts
+		// preloading the next native URL roughly 45 seconds before the switch.
+		if queued, exists := a.state.TrackByID(id); exists {
+			track, ok = queued, true
+		} else if current := a.state.Current(); current.ID == id {
+			track, ok = current, true
+		}
+		if !ok {
 			writeJSON(w, 404, map[string]any{"error": "not_found"})
 			return
 		}

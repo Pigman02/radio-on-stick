@@ -161,9 +161,12 @@ const state = {
   lastMessageCount: -1,
   preloadAudio: null,
   preloadKey: "",
+  preloadRetryAt: 0,
+  preloadAttempts: 0,
   preloadCover: null,
   frameId: null,
   lastMediaPositionAt: 0,
+  lastDriftSeekAt: 0,
 };
 
 // Local/owner playback can request ?direct=1 to avoid P2P entirely and
@@ -1176,6 +1179,7 @@ function seekToLive() {
     return;
   }
   const target = Math.min(live / 1000, Math.max(0, audio.duration - 0.35));
+  if (audio.seeking || !hasBufferedAt(audio, target, 0.5)) return;
   if (Math.abs(audio.currentTime - target) > 0.8) {
     try {
       audio.currentTime = target;
@@ -1192,12 +1196,15 @@ function syncPlaybackPosition(now = state.now, force = false) {
     if (!audio.paused) mesh.seekLive();
     return;
   }
-  if (!audio.src || audio.paused) return;
+  if (!audio.src || audio.paused || audio.seeking) return;
   const duration = Number(audio.duration);
   if (!Number.isFinite(duration) || duration <= 0) return;
   if (target >= duration * 1000 - 500) return;
   const drift = target - audio.currentTime * 1000;
   if (Math.abs(drift) > (force ? 900 : 1800)) {
+    if (!hasBufferedAt(audio, target / 1000, 0.8)) return;
+    if (Date.now() - state.lastDriftSeekAt < 4_000) return;
+    state.lastDriftSeekAt = Date.now();
     try {
       audio.currentTime = Math.max(0, Math.min(target / 1000, duration - 0.35));
     } catch (_) {
@@ -1313,10 +1320,27 @@ function fallbackToSingleElement(element, url, wasMesh, positionMs = 0) {
   }
 }
 
+function hasBufferedAt(element, targetSeconds, needSeconds = 0.8) {
+  if (!element || element.readyState < 2) return false;
+  try {
+    const ranges = element.buffered;
+    for (let index = 0; index < ranges.length; index += 1) {
+      const start = ranges.start(index);
+      const end = ranges.end(index);
+      if (targetSeconds >= start - 0.25 && targetSeconds + needSeconds <= end + 0.25) {
+        return true;
+      }
+    }
+  } catch (_) {
+    return false;
+  }
+  return false;
+}
+
 function adoptPreloaded(url, positionMs) {
   if (IS_IOS_SAFARI) {
     const wasMesh = Boolean(mesh && mesh.isActive());
-    if (fallbackToSingleElement(audio, url, wasMesh, 0)) return true;
+    if (fallbackToSingleElement(audio, url, wasMesh, positionMs)) return true;
   }
   const pre = state.preloadAudio;
   if (!pre || !pre.src || pre.readyState < 2) return false;
@@ -1327,9 +1351,10 @@ function adoptPreloaded(url, positionMs) {
     return false;
   }
   if (pre.src !== expected) return false;
+  const target = Number.isFinite(positionMs) ? Math.max(0, positionMs) : 0;
+  if (!hasBufferedAt(pre, target / 1000, 0.8)) return false;
   const old = audio;
   const wasMesh = Boolean(mesh && mesh.isActive());
-  const target = Number.isFinite(positionMs) ? Math.max(0, positionMs) : 0;
   audio = pre;
   state.preloadAudio = null;
   state.preloadKey = "";
@@ -1533,13 +1558,27 @@ function preloadNext(now = state.now) {
     return;
   }
   if (state.preloadKey === key) return;
+  if (Date.now() < state.preloadRetryAt) return;
 
+  if (state.preloadKey && state.preloadKey !== key) {
+    state.preloadAttempts = 0;
+    state.preloadRetryAt = 0;
+  }
   stopPreload();
   const element = audio === audioA ? audioB : audioA;
   if (!element) return;
   element.preload = "auto";
   element.src = url;
   wireAudioElement(element);
+  element.addEventListener("error", () => {
+    if (state.preloadAudio !== element || state.preloadKey !== key) return;
+    element.removeAttribute("src");
+    element.load();
+    state.preloadAudio = null;
+    state.preloadKey = "";
+    state.preloadAttempts += 1;
+    state.preloadRetryAt = Date.now() + Math.min(8000, 1000 * 2 ** Math.min(state.preloadAttempts - 1, 3));
+  }, { once: true });
   element.load();
   state.preloadAudio = element;
   state.preloadKey = key;
@@ -1658,6 +1697,8 @@ function applyNow(now) {
     state.lastReportKey = null;
     state.lastPositionSec = -1;
     state.localPausedPositionMs = null;
+    state.preloadAttempts = 0;
+    state.preloadRetryAt = 0;
     if (mesh) mesh.setPaused(false);
     clearStalledTimer();
     loadLyrics(now.lyrics_url, now.track.id);
