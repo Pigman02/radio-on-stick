@@ -2032,6 +2032,7 @@ function syncCurrentLyric(index, animate = false) {
     currentLyric.classList.remove("lyric-swap");
     void currentLyric.offsetWidth;
     currentLyric.classList.add("lyric-swap");
+    updateMediaSession(state.now);
   }
 }
 
@@ -2917,14 +2918,26 @@ function updateMediaSession(now = state.now) {
       return;
     }
     if (typeof MediaMetadata === "function") {
-      const cover = absoluteUrl(track.cover_url || "");
-      const artwork = /^https?:/i.test(cover)
-        ? [{ src: cover, sizes: "300x300" }]
+      const cover = coverSource(track.cover_url || "");
+      const artwork = cover && cover !== "/placeholder.svg"
+        ? [{ src: absoluteUrl(cover), sizes: "512x512" }]
         : [];
+      let lyric = "";
+      if (state.lyricsLines.length && state.lastLyricIndex >= 0) {
+        lyric = String(currentLyricText.textContent || "").trim();
+        if (lyric === "♪" || lyric === "暂无歌词") lyric = "";
+      }
+      // Media Session has no dedicated lyric field. The artist line is the
+      // one iOS/Android Now Playing exposes on small system surfaces, so
+      // append the current lyric there while preserving the artist and album.
+      const artistLine = [track.artist || "", lyric].filter(Boolean).join(" · ");
+      const albumLine = track.source === "bilibili"
+        ? (track.source_id || track.album || "")
+        : (track.album || "");
       navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title || "",
-        artist: track.artist || "",
-        album: track.album || "",
+        artist: artistLine,
+        album: albumLine,
         artwork,
       });
     }
@@ -3337,7 +3350,7 @@ function loadAdminExtension() {
   style.id = "adminExtensionStyle";
   document.head.appendChild(style);
   const script = document.createElement("script");
-  script.src = "/admin.js?v=35";
+  script.src = "/admin.js?v=36";
   script.id = "adminExtensionScript";
   adminExtensionPromise = new Promise((resolve, reject) => {
     script.onload = resolve;

@@ -537,15 +537,30 @@ func (a *api) ensureTrackAudio(track *library.Track) bool {
 	if track == nil || track.ID == "" { return false }
 	// Local library and uploads are files, not remote URLs; they are served by
 	// /native and /source directly from Path.
-	if track.Path != "" { return true }
-	if track.URL != "" { return true }
+	if track.Path != "" {
+		if latest, ok := a.index.Get(track.ID); ok {
+			if track.CoverURL == "" { track.CoverURL = latest.CoverURL }
+			if track.Title == "" { track.Title = latest.Title }
+			if track.Artist == "" { track.Artist = latest.Artist }
+			if track.Album == "" { track.Album = latest.Album }
+			if track.DurationMS == 0 { track.DurationMS = latest.DurationMS }
+			a.state.UpdateTrackMetadata(*track)
+		}
+		return true
+	}
+	needsMetadata := track.Title == "" || track.Album == ""
+	if track.URL != "" && !needsMetadata { return true }
 	if track.Source == "" || track.SourceID == "" { return false }
 	resolved, err := a.plugins.Resolve(track.Source, track.SourceID)
 	if err != nil || resolved.AudioURL == "" { return false }
-	track.URL = resolved.AudioURL
+	if track.URL == "" { track.URL = resolved.AudioURL }
+	if track.Title == "" { track.Title = resolved.Title }
+	if track.Artist == "" { track.Artist = resolved.Artist }
+	if track.Album == "" { track.Album = resolved.Album }
 	if track.DurationMS == 0 { track.DurationMS = resolved.DurationMS }
 	if track.CoverURL == "" { track.CoverURL = resolved.CoverURL }
 	a.state.SetTrackAudio(track.ID, track.URL)
+	a.state.UpdateTrackMetadata(*track)
 	return true
 }
 
@@ -1627,6 +1642,25 @@ func (a *api) adminDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+func isBilibiliLookup(query string) bool {
+	value := strings.ToLower(strings.TrimSpace(query))
+	if strings.Contains(value, "bilibili.com") || strings.Contains(value, "b23.tv") {
+		return true
+	}
+	if strings.HasPrefix(value, "bv") && len(value) >= 12 {
+		return true
+	}
+	if strings.HasPrefix(value, "av") && len(value) > 2 {
+		for _, char := range value[2:] {
+			if char < '0' || char > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 	if !a.allow("search", a.clientIP(r), 20, time.Minute) {
 		a.rateLimited(w, "搜索")
@@ -1648,6 +1682,11 @@ func (a *api) searchAll(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.plugins != nil && strings.TrimSpace(query) != "" {
 		for _, item := range a.plugins.Search(query) {
+			if strings.EqualFold(item.Source, "bilibili") && !isBilibiliLookup(query) {
+				// Bilibili is link/BV-only; keyword search must not expose
+				// arbitrary Bilibili results.
+				continue
+			}
 			a.pluginMu.Lock()
 			a.pluginCache[item.ID] = item
 			a.pluginMu.Unlock()

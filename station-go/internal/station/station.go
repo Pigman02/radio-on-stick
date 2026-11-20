@@ -357,6 +357,26 @@ func (s *State) HistoryByTrackID(id string) (History, bool) {
 	return History{}, false
 }
 
+func (s *State) UpdateTrackMetadata(track library.Track) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	merge := func(target *library.Track) {
+		if track.Title != "" { target.Title = track.Title }
+		if track.Artist != "" { target.Artist = track.Artist }
+		if track.Album != "" { target.Album = track.Album }
+		if track.DurationMS > 0 { target.DurationMS = track.DurationMS }
+		if track.CoverURL != "" { target.CoverURL = track.CoverURL }
+		if track.Source != "" { target.Source = track.Source }
+		if track.SourceID != "" { target.SourceID = track.SourceID }
+		if track.URL != "" { target.URL = track.URL }
+	}
+	if s.current.ID == track.ID { merge(&s.current) }
+	for index := range s.queue {
+		if s.queue[index].ID == track.ID { merge(&s.queue[index]) }
+	}
+	s.saveLocked()
+}
+
 func (s *State) SetTrackAudio(id, url string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -417,7 +437,7 @@ func (s *State) SnapshotLocked() map[string]any {
 		}
 		direct := "/native/" + track.ID
 		return map[string]any{
-			"id": track.ID, "source": source, "title": track.Title,
+			"id": track.ID, "source": source, "source_id": track.SourceID, "title": track.Title,
 			"artist": track.Artist, "album": track.Album,
 			"duration_ms": track.DurationMS, "cover_url": track.CoverURL,
 			"lyrics_url": "/api/lyrics/" + track.ID,
@@ -774,8 +794,22 @@ func (s *State) repairMetadataLocked() {
 			if track.URL == "" { track.URL = item.URL }
 		}
 	}
+	fillFromIndex := func(track *library.Track) {
+		if track.ID == "" { return }
+		if latest, ok := s.index.Get(track.ID); ok {
+			if track.Title == "" { track.Title = latest.Title }
+			if track.Artist == "" { track.Artist = latest.Artist }
+			if track.Album == "" { track.Album = latest.Album }
+			if track.DurationMS == 0 { track.DurationMS = latest.DurationMS }
+			if track.CoverURL == "" { track.CoverURL = latest.CoverURL }
+			if track.Path == "" { track.Path = latest.Path }
+			if track.Source == "" { track.Source = latest.Source }
+			if track.SourceID == "" { track.SourceID = latest.SourceID }
+		}
+	}
 	fill(&s.current)
-	for index := range s.queue { fill(&s.queue[index]) }
+	fillFromIndex(&s.current)
+	for index := range s.queue { fill(&s.queue[index]); fillFromIndex(&s.queue[index]) }
 	for index := range s.requests {
 		entry := &s.requests[index]
 		if len(entry.PinClients) == 0 && entry.PinCount > 0 {
