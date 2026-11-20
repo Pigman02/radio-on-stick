@@ -44,6 +44,24 @@ type frameInfo struct {
 	durationMS int
 }
 
+// UpstreamHeaders returns the browser-like headers required by some CDNs.
+// Bilibili's DASH CDN rejects otherwise valid audio URLs without a Referer.
+func UpstreamHeaders(track library.Track) map[string]string {
+	if !strings.EqualFold(track.Source, "bilibili") {
+		return nil
+	}
+	return map[string]string{
+		"Referer": "https://www.bilibili.com/",
+		"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+	}
+}
+
+func applyHeaders(request *http.Request, track library.Track) {
+	for key, value := range UpstreamHeaders(track) {
+		request.Header.Set(key, value)
+	}
+}
+
 func parseMP3Frame(data []byte) *frameInfo {
 	if len(data) < 4 || data[0] != 0xff || data[1]&0xe0 != 0xe0 {
 		return nil
@@ -135,7 +153,7 @@ func NewSession(track library.Track, startPositionMS int64) (*Session, error) {
 	// frame parser. Re-encoding a 128 kbps MP3 only burns CPU and adds latency.
 	mp3 := track.Path != "" && strings.EqualFold(filepath.Ext(track.Path), ".mp3")
 	if track.URL != "" {
-		mp3 = isMP3Response(track.URL)
+		mp3 = isMP3Response(track.URL, track)
 	}
 	if mp3 {
 		if track.Path != "" {
@@ -145,7 +163,12 @@ func NewSession(track library.Track, startPositionMS int64) (*Session, error) {
 			}
 			reader = file
 		} else {
-			response, err := http.Get(track.URL)
+			request, err := http.NewRequest(http.MethodGet, track.URL, nil)
+			if err != nil {
+				return nil, err
+			}
+			applyHeaders(request, track)
+			response, err := http.DefaultClient.Do(request)
 			if err != nil {
 				return nil, err
 			}
@@ -159,6 +182,9 @@ func NewSession(track library.Track, startPositionMS int64) (*Session, error) {
 		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-re"}
 		if startPositionMS > 0 {
 			args = append(args, "-ss", fmt.Sprintf("%.3f", float64(startPositionMS)/1000))
+		}
+		if headers := UpstreamHeaders(track); headers != nil {
+			args = append(args, "-headers", fmt.Sprintf("Referer: %s\r\nUser-Agent: %s\r\n", headers["Referer"], headers["User-Agent"]))
 		}
 		args = append(args, "-i", input, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
 		cmd = exec.Command("ffmpeg", args...)
@@ -187,12 +213,13 @@ func NewSession(track library.Track, startPositionMS int64) (*Session, error) {
 	return s, nil
 }
 
-func isMP3Response(rawURL string) bool {
+func isMP3Response(rawURL string, track library.Track) bool {
 	client := &http.Client{Timeout: 8 * time.Second}
 	request, err := http.NewRequest(http.MethodHead, rawURL, nil)
 	if err != nil {
 		return false
 	}
+	applyHeaders(request, track)
 	response, err := client.Do(request)
 	if err != nil {
 		return false

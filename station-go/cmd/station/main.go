@@ -557,7 +557,7 @@ func (a *api) sourceManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	track := a.state.Current()
-	if mp3Only, ok := a.state.Policy()["mp3_remote_only"].(bool); ok && mp3Only && track.URL != "" && !a.remoteIsMP3(track.URL) {
+	if mp3Only, ok := a.state.Policy()["mp3_remote_only"].(bool); ok && mp3Only && track.URL != "" && !a.remoteIsMP3(track.URL, track.Source) {
 		writeJSON(w, 415, map[string]any{"error": "mp3_only", "message": "管理员只允许 MP3 第三方音源"})
 		return
 	}
@@ -587,7 +587,7 @@ func (a *api) sourceChunk(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(frame)
 }
 
-func (a *api) remoteIsMP3(rawURL string) bool {
+func (a *api) remoteIsMP3(rawURL, source string) bool {
 	a.mp3Mu.Lock()
 	if known, ok := a.mp3Cache[rawURL]; ok {
 		a.mp3Mu.Unlock()
@@ -598,6 +598,9 @@ func (a *api) remoteIsMP3(rawURL string) bool {
 	request, err := http.NewRequest(http.MethodHead, rawURL, nil)
 	if err != nil {
 		return false
+	}
+	for key, value := range stream.UpstreamHeaders(library.Track{Source: source}) {
+		request.Header.Set(key, value)
 	}
 	response, err := client.Do(request)
 	ok := false
@@ -613,7 +616,7 @@ func (a *api) remoteIsMP3(rawURL string) bool {
 	return ok
 }
 
-func (a *api) proxyRemoteAudio(w http.ResponseWriter, r *http.Request, rawURL string) {
+func (a *api) proxyRemoteAudio(w http.ResponseWriter, r *http.Request, rawURL, source string) {
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, rawURL, nil)
 	if err != nil {
 		http.Error(w, "audio unavailable", http.StatusBadGateway)
@@ -621,6 +624,9 @@ func (a *api) proxyRemoteAudio(w http.ResponseWriter, r *http.Request, rawURL st
 	}
 	if value := r.Header.Get("Range"); value != "" {
 		request.Header.Set("Range", value)
+	}
+	for key, value := range stream.UpstreamHeaders(library.Track{Source: source}) {
+		request.Header.Set(key, value)
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -708,8 +714,8 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if track.URL != "" {
-		if a.remoteIsMP3(track.URL) {
-			a.proxyRemoteAudio(w, r, track.URL)
+		if a.remoteIsMP3(track.URL, track.Source) {
+			a.proxyRemoteAudio(w, r, track.URL, track.Source)
 			return
 		}
 		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-re"}
@@ -717,6 +723,9 @@ func (a *api) native(w http.ResponseWriter, r *http.Request) {
 			if position := a.state.PositionMS(); position > 0 {
 				args = append(args, "-ss", fmt.Sprintf("%.3f", float64(position)/1000))
 			}
+		}
+		if headers := stream.UpstreamHeaders(track); headers != nil {
+			args = append(args, "-headers", fmt.Sprintf("Referer: %s\r\nUser-Agent: %s\r\n", headers["Referer"], headers["User-Agent"]))
 		}
 		args = append(args, "-i", track.URL, "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1")
 		if mp3Only, ok := a.state.Policy()["mp3_remote_only"].(bool); ok && mp3Only {
